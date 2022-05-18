@@ -32,6 +32,7 @@ pub fn main() {
     // optional parameters
     opts.optopt("h", "host", "server's address", "IP:PORT");
     opts.optopt("k", "ret-rate", "ret rate", "RATE");
+    opts.optopt("c", "contact-size", "contact size", "RATE");
     opts.optopt("s", "send-rate", "send rate", "RATE");
     //    opts.optopt("a", "alpha", "PIR aggregation", "ALPHA");
     opts.optopt("d", "depth", "PIR depth", "DEPTH");
@@ -68,6 +69,11 @@ pub fn main() {
     };
 
     let ret_rate: u32 = match matches.opt_str("k") {
+        Some(v) => u32::from_str_radix(&v, 10).unwrap(),
+        None => 1,
+    };
+
+    let contact_size: u32 = match matches.opt_str("c") {
         Some(v) => u32::from_str_radix(&v, 10).unwrap(),
         None => 1,
     };
@@ -139,6 +145,7 @@ pub fn main() {
                                              &server_addr,
                                              send_rate,
                                              ret_rate,
+                                             contact_size,
                                              depth,
                                              ret_scheme,
                                              opt_scheme,
@@ -170,7 +177,8 @@ pub fn main() {
                 //      println!("{} - Sending {} tuples for round {}", unique_id, send_rate, client.get_round());
                 if rnd % 5 == 0 {
                     println!("{} - Dialing for round {}", unique_id, client.get_round());
-                    client.dial(&peer_name, &wait_scope, &mut event_port);
+                    client.send(&peer_name, &wait_scope, &mut event_port,
+                        &client.get_contact_partitions(), &client.get_contact_buckets());
                 } else {
 
                     // create random message
@@ -184,7 +192,8 @@ pub fn main() {
                     let start = PreciseTime::now();
 
                     // send tuple
-                    client.send(&peer_name, &mut messages, &wait_scope, &mut event_port)?;
+                    client.send(&peer_name, &wait_scope, &mut event_port,
+                        &client.get_partitions(), &client.get_buckets());
 
                     let end = PreciseTime::now();
                     let duration = start.to(end);

@@ -68,11 +68,13 @@ pub struct PungClient<'a> {
     name: &'a str,
     send_rate: u32,
     ret_rate: u32, // roughly same as # of buckets
+    contact_size: u32,
 
     conn: pung_rpc::Client,
 
     round: u64,
     buckets: Vec<BucketInfo>, // Information about buckets for this round
+    contact_buckets: Vec<BucketInfo>,
 
     ret_scheme: db::RetScheme, // retrieval scheme
     opt_scheme: db::OptScheme, // optimization scheme
@@ -81,6 +83,7 @@ pub struct PungClient<'a> {
 
     pir_handler: PirClient<'a>,
     partitions: Vec<Vec<u8>>, // Static partitioning of label space
+    contact_partitions: Vec<Vec<u8>>,
 
     // Mapping between collection and encoding recipe (i.e., which pieces to xor together)
     h4_mappings: HashMap<usize, [HashSet<usize>; 4]>,
@@ -98,6 +101,7 @@ impl<'a> PungClient<'a> {
         address: &str,
         send_rate: u32,
         ret_rate: u32,
+        contact_size: u32,
         depth: u64,
         ret_scheme: db::RetScheme,
         opt_scheme: db::OptScheme,
@@ -139,6 +143,13 @@ impl<'a> PungClient<'a> {
 
         for i in 0..ret_rate as usize {
             partitions.push(util::label_marker(i, ret_rate as usize));
+        }
+
+        // Initialize static partitions of label space
+        let mut contact_partitions: Vec<Vec<u8>> = Vec::with_capacity(contact_size as usize);
+
+        for i in 0..contact_size as usize {
+            contact_partitions.push(util::label_marker(i, contact_size as usize));
         }
 
         // Initialize h4 mapping
@@ -190,170 +201,46 @@ impl<'a> PungClient<'a> {
             name: name,
             send_rate: send_rate,
             ret_rate: ret_rate,
+            contact_size: contact_size,
             round: 0,
             buckets: Vec::with_capacity(ret_rate as usize),
+            contact_buckets: Vec::with_capacity(contact_size as usize),
             conn: rpc_system.bootstrap(rpc_twoparty_capnp::Side::Server),
             ret_scheme: ret_scheme,
             opt_scheme: opt_scheme,
             peers: HashMap::new(),
             pir_handler: PirClient::new(1, 1, 1, depth),
             partitions: partitions,
+            contact_partitions: contact_partitions,
             h4_mappings: h4_mappings,
         }
     }
 
-    pub fn dial(&mut self, recipient: &str, scope: &gj::WaitScope, port: &mut gjio::EventPort) -> Result<u64, Error> {
-        if !self.peers.contains_key(&recipient) {
-            return Err(Error::failed("Invalid recipient name".to_string()));
-        }
-
-        let peer = &self.peers[recipient];
-        let mut send_request = self.conn.send_request();
-        send_request.get().set_id(self.id);
-        send_request.get().set_round(self.round);
-
-        println!("Dialing {}", recipient);
-
-        {
-            let mut tuple_list = send_request.get().init_tuples(msgs.len() as u32);
-            let mut idx: u32 = 0;
-            let mut measurement_byte_count = 0;
-
-            for msg in msgs.drain(..) {
-                let (mut c, mut mac) = pcrypto::encrypt(&peer.keys.k_e[..], self.round, &msg[..]);
-
-                let mut tuple = pcrypto::gen_label(
-                    &peer.keys.k_l[..],
-                    self.round,
-                    peer.uid_peer,
-                    idx as u64,
-                    0,
-                );
-
-                // If we are using aliasing, generate an extra label
-                // and make sure it falls in a separate bucket
-                if self.opt_scheme >= db::OptScheme::Aliasing {
-                    let bucket_idx = util::bucket_idx(&tuple, &self.partitions);
-
-                    let mut label_alias = pcrypto::gen_label(
-                        &peer.keys.k_l2[..],
-                        self.round,
-                        peer.uid_peer,
-                        idx as u64,
-                        0,
-                    );
-
-                    let mut bucket_alias_idx = util::bucket_idx(&label_alias, &self.partitions);
-
-                    let mut collision_count = 1; // count collisions of labels to the same bucket
-
-                    while bucket_idx == bucket_alias_idx {
-                        label_alias = pcrypto::gen_label(
-                            &peer.keys.k_l2[..],
-                            self.round,
-                            peer.uid_peer,
-                            idx as u64,
-                            collision_count,
-                        );
-
-                        bucket_alias_idx = util::bucket_idx(&label_alias, &self.partitions);
-                        collision_count += 1;
-                    }
-
-                    // Postcondtion: the two labels fall in different buckets
-
-                    tuple.append(&mut label_alias);
-                }
-
-                tuple.append(&mut c);
-                tuple.append(&mut mac);
-
-                measurement_byte_count += tuple.len();
-
-                tuple_list.set(idx as u32, &tuple[..]);
-                idx += 1;
-            }
-
-            println!("Upload (send rpc) {} bytes", measurement_byte_count + 16);
-        }
-
-        // get RPC response which contains total number of tuples and lmids
-
-        let mut total_tuples: u64 = 0;
-
-        let res_ptr = send_request.send().promise.wait(scope, port)?;
-        let response = res_ptr.get()?;
-
-        let buckets_num = response.get_num_messages()?;
-        assert_eq!(buckets_num.len(), self.ret_rate);
-
-        if self.opt_scheme == db::OptScheme::Hybrid2 {
-            let buckets_lmid = response.get_min_labels()?;
-            assert_eq!(buckets_num.len(), buckets_lmid.len());
-
-            for i in 0..buckets_num.len() {
-                self.buckets.push(BucketInfo {
-                    num: buckets_num.get(i),
-                    lmid: vec![buckets_lmid.get(i)?.to_vec()],
-                });
-
-                total_tuples += buckets_num.get(i);
-            }
-
-            // This accounts for: 8 bytes (64 bits) for each bucket number entry
-            // and the Lmid label
-            println!(
-                "Download (send rpc) {} bytes",
-                (buckets_num.len() * 8) + (buckets_lmid.len() * db::LABEL_SIZE as u32)
-            );
-        } else if self.opt_scheme == db::OptScheme::Hybrid4 {
-            let buckets_lmid = response.get_min_labels()?;
-            assert_eq!(buckets_num.len() * 3, buckets_lmid.len()); // delimeters per bucket
-
-            for i in 0..buckets_num.len() {
-                let mut lmid = Vec::with_capacity(3);
-
-                for j in 0..3 {
-                    // collections
-                    lmid.push(buckets_lmid.get(3 * i + j)?.to_vec());
-                }
-
-                self.buckets.push(BucketInfo {
-                    num: buckets_num.get(i),
-                    lmid: lmid,
-                });
-                total_tuples += buckets_num.get(i);
-            }
-
-            // This accounts for: 8 bytes (64 bits) for each bucket number entry
-            // and the 3 Lmid labels per bucket
-            println!(
-                "Download (send rpc) {} bytes",
-                (buckets_num.len() * 8) + (buckets_lmid.len() * db::LABEL_SIZE as u32)
-            );
-        } else {
-            for i in 0..buckets_num.len() {
-                self.buckets.push(BucketInfo {
-                    num: buckets_num.get(i),
-                    lmid: Vec::new(),
-                });
-                total_tuples += buckets_num.get(i);
-            }
-
-            // 8 bytes (64 bits) for each bucket number entry
-            println!("Download (send rpc) {} bytes", buckets_num.len() * 8);
-        }
-
-        Ok(total_tuples)
-    }
 
     pub fn get_round(&self) -> u64 {
         self.round
     }
 
+    pub fn get_partitions(&self) -> &Vec<Vec<u8>> {
+        &self.partitions
+    }
+
+    pub fn get_contact_partitions(&self) -> &Vec<Vec<u8>> {
+        &self.contact_partitions
+    }
+
+    pub fn get_buckets(&self) -> &Vec<BucketInfo> {
+        &self.buckets
+    }
+
+    pub fn get_contact_buckets(&self) -> &Vec<BucketInfo> {
+        &self.contact_buckets
+    }
+
     pub fn inc_round(&mut self, val: u64) {
         self.round += val;
         self.buckets.clear();
+        self.contact_buckets.clear();
     }
 
     /// Adds a peer. A unique id between peer and `self` is derived
@@ -467,6 +354,8 @@ impl<'a> PungClient<'a> {
         msgs: &mut Vec<Vec<u8>>,
         scope: &gj::WaitScope,
         port: &mut gjio::EventPort,
+        partitions: &Vec<Vec<u8>>,
+        buckets: &mut Vec<BucketInfo>,
     ) -> Result<u64, Error> {
         if !self.peers.contains_key(&recipient) {
             return Err(Error::failed("Invalid recipient name".to_string()));
@@ -498,7 +387,7 @@ impl<'a> PungClient<'a> {
                 // If we are using aliasing, generate an extra label
                 // and make sure it falls in a separate bucket
                 if self.opt_scheme >= db::OptScheme::Aliasing {
-                    let bucket_idx = util::bucket_idx(&tuple, &self.partitions);
+                    let bucket_idx = util::bucket_idx(&tuple, &partitions);
 
                     let mut label_alias = pcrypto::gen_label(
                         &peer.keys.k_l2[..],
@@ -508,7 +397,7 @@ impl<'a> PungClient<'a> {
                         0,
                     );
 
-                    let mut bucket_alias_idx = util::bucket_idx(&label_alias, &self.partitions);
+                    let mut bucket_alias_idx = util::bucket_idx(&label_alias, &partitions);
 
                     let mut collision_count = 1; // count collisions of labels to the same bucket
 
@@ -521,7 +410,7 @@ impl<'a> PungClient<'a> {
                             collision_count,
                         );
 
-                        bucket_alias_idx = util::bucket_idx(&label_alias, &self.partitions);
+                        bucket_alias_idx = util::bucket_idx(&label_alias, &partitions);
                         collision_count += 1;
                     }
 
@@ -557,7 +446,7 @@ impl<'a> PungClient<'a> {
             assert_eq!(buckets_num.len(), buckets_lmid.len());
 
             for i in 0..buckets_num.len() {
-                self.buckets.push(BucketInfo {
+                buckets.push(BucketInfo {
                     num: buckets_num.get(i),
                     lmid: vec![buckets_lmid.get(i)?.to_vec()],
                 });
@@ -583,7 +472,7 @@ impl<'a> PungClient<'a> {
                     lmid.push(buckets_lmid.get(3 * i + j)?.to_vec());
                 }
 
-                self.buckets.push(BucketInfo {
+                buckets.push(BucketInfo {
                     num: buckets_num.get(i),
                     lmid: lmid,
                 });
@@ -598,7 +487,7 @@ impl<'a> PungClient<'a> {
             );
         } else {
             for i in 0..buckets_num.len() {
-                self.buckets.push(BucketInfo {
+                buckets.push(BucketInfo {
                     num: buckets_num.get(i),
                     lmid: Vec::new(),
                 });
@@ -618,6 +507,7 @@ impl<'a> PungClient<'a> {
     fn schedule(
         &'a self,
         peer_names: &[&'a str],
+        partitions: &Vec<Vec<u8>>
     ) -> Result<HashMap<usize, Vec<(&'a PungPeer, Vec<u8>)>>, Error> {
         // bucket_id -> [(peer, label)]
         let mut bucket_map: HashMap<usize, Vec<(&'a PungPeer, Vec<u8>)>> = HashMap::new();
@@ -641,7 +531,7 @@ impl<'a> PungClient<'a> {
                 pcrypto::gen_label(&peer.keys.k_l[..], self.round, peer.uid_self, *count, 0);
 
             // find out on which bucket this label falls
-            let bucket_idx = util::bucket_idx(&label, &self.partitions);
+            let bucket_idx = util::bucket_idx(&label, &partitions);
 
             // Add (peer, label) to the bucket map. If there are collisions, append it to list
             // If there is aliasing, derive second label too
@@ -655,7 +545,7 @@ impl<'a> PungClient<'a> {
                     *count,
                     collisions,
                 );
-                let mut bucket_idx_alias = util::bucket_idx(&label_alias, &self.partitions);
+                let mut bucket_idx_alias = util::bucket_idx(&label_alias, &partitions);
 
                 // Derive a different label if there are collisions (must ensure labels map to
                 // different buckets)
@@ -668,7 +558,7 @@ impl<'a> PungClient<'a> {
                         *count,
                         collisions,
                     );
-                    bucket_idx_alias = util::bucket_idx(&label_alias, &self.partitions);
+                    bucket_idx_alias = util::bucket_idx(&label_alias, &partitions);
                 }
 
                 // Lenghts of the buckets
@@ -744,6 +634,7 @@ impl<'a> PungClient<'a> {
         &self,
         scope: &gj::WaitScope,
         port: &mut gjio::EventPort,
+        buckets: &Vec<BucketInfo>
     ) -> Result<HashMap<usize, HashMap<usize, Vec<Vec<u8>>>>, Error> {
         let mut map_request = self.conn.get_mapping_request();
         map_request.get().set_round(self.round);
@@ -770,7 +661,7 @@ impl<'a> PungClient<'a> {
 
         let mut download_measurement = 0;
 
-        for bucket_idx in 0..self.buckets.len() {
+        for bucket_idx in 0..buckets.len() {
             let bucket_map = label_map.entry(bucket_idx).or_insert_with(HashMap::new);
 
             for collection_idx in &meaningful_labels {
@@ -802,6 +693,7 @@ impl<'a> PungClient<'a> {
         &self,
         scope: &gj::WaitScope,
         port: &mut gjio::EventPort,
+        buckets: &Vec<BucketInfo>
     ) -> Result<HashMap<usize, HashMap<usize, bloomfilter::Bloom>>, Error> {
         let mut bloom_request = self.conn.get_bloom_request();
         bloom_request.get().set_round(self.round);
@@ -829,9 +721,9 @@ impl<'a> PungClient<'a> {
 
         let mut download_measurement = 0;
 
-        for bucket_idx in 0..self.buckets.len() {
+        for bucket_idx in 0..buckets.len() {
             let bucket_map = bloom_map.entry(bucket_idx).or_insert_with(HashMap::new);
-            let num_tuples = self.buckets[bucket_idx].num_tuples();
+            let num_tuples = buckets[bucket_idx].num_tuples();
 
 
             for collection_idx in &meaningful_labels {
@@ -867,6 +759,7 @@ impl<'a> PungClient<'a> {
     fn retr_normal(
         &'a self,
         mut bucket_map: HashMap<usize, Vec<(&'a PungPeer, Vec<u8>)>>,
+        buckets: &Vec<BucketInfo>,
         scope: &gj::WaitScope,
         port: &mut gjio::EventPort,
     ) -> Result<Vec<Vec<u8>>, Error> {
@@ -879,16 +772,16 @@ impl<'a> PungClient<'a> {
         match self.ret_scheme {
             db::RetScheme::Explicit => {
                 // Get labels explicitly
-                let explicit_labels = self.get_explicit_labels(scope, port)?;
+                let explicit_labels = self.get_explicit_labels(scope, port, &buckets)?;
 
                 for _ in 0..retries {
-                    for bucket in 0..self.partitions.len() {
+                    for bucket in 0..buckets.len() {
                         // Get next label to retrieve
                         let (peer, label) =
                             self.next_label(&mut bucket_map, bucket, dummy, &mut dummy_count);
 
                         // Number of elements in bucket
-                        let num = self.buckets[bucket].num_tuples();
+                        let num = buckets[bucket].num_tuples();
 
                         // Get labels of collection 0 (which is the entire bucket)
                         let labels = &explicit_labels[&bucket][&0];
@@ -916,16 +809,16 @@ impl<'a> PungClient<'a> {
 
             db::RetScheme::Bloom => {
                 // Get bloom filter
-                let bloom_filters = self.get_bloom_filter(scope, port)?;
+                let bloom_filters = self.get_bloom_filter(scope, port, &buckets)?;
 
                 for _ in 0..retries {
-                    for bucket in 0..self.partitions.len() {
+                    for bucket in 0..buckets.len() {
                         // Get next label to retrieve
                         let (peer, label) =
                             self.next_label(&mut bucket_map, bucket, dummy, &mut dummy_count);
 
                         // Number of elements in bucket
-                        let num = self.buckets[bucket].num_tuples();
+                        let num = buckets[bucket].num_tuples();
 
                         // Get bloom filter of collection 0 (entire bucket)
                         let bloom = &bloom_filters[&bucket][&0];
@@ -953,13 +846,13 @@ impl<'a> PungClient<'a> {
 
             db::RetScheme::Tree => {
                 for _ in 0..retries {
-                    for bucket in 0..self.partitions.len() {
+                    for bucket in 0..buckets.len() {
                         // Get next label
                         let (peer, label) =
                             self.next_label(&mut bucket_map, bucket, dummy, &mut dummy_count);
 
                         // Number of elemnets in bucket
-                        let num = self.buckets[bucket].num_tuples();
+                        let num = buckets[bucket].num_tuples();
 
                         // Perform bst retrieval
                         let result =
@@ -987,6 +880,7 @@ impl<'a> PungClient<'a> {
     fn retr_hybrid2(
         &'a self,
         mut bucket_map: HashMap<usize, Vec<(&'a PungPeer, Vec<u8>)>>,
+        buckets: &Vec<BucketInfo>,
         scope: &gj::WaitScope,
         port: &mut gjio::EventPort,
     ) -> Result<Vec<Vec<u8>>, Error> {
@@ -1000,18 +894,18 @@ impl<'a> PungClient<'a> {
         match self.ret_scheme {
             db::RetScheme::Explicit => {
                 // Get labels explicitly
-                let explicit_labels = self.get_explicit_labels(scope, port)?;
+                let explicit_labels = self.get_explicit_labels(scope, port, &buckets)?;
 
                 for _ in 0..retries {
-                    for bucket in 0..self.partitions.len() {
+                    for bucket in 0..buckets.len() {
                         // Get 2 labels to retrieve
                         let (peer1, label1) =
                             self.next_label(&mut bucket_map, bucket, dummy, &mut dummy_count);
                         let (peer2, label2) =
                             self.next_label(&mut bucket_map, bucket, dummy, &mut dummy_count);
 
-                        let num = self.buckets[bucket].num_tuples();
-                        let lmid = self.buckets[bucket].get_lmid(0);
+                        let num = buckets[bucket].num_tuples();
+                        let lmid = buckets[bucket].get_lmid(0);
 
                         // Compare chosen labels to the bucket's lmid
                         let cmp1 = util::label_cmp(&label1[..], lmid);
@@ -1136,18 +1030,18 @@ impl<'a> PungClient<'a> {
 
             db::RetScheme::Bloom => {
                 // Get bloom filters
-                let bloom_filters = self.get_bloom_filter(scope, port)?;
+                let bloom_filters = self.get_bloom_filter(scope, port, &buckets)?;
 
                 for _ in 0..retries {
-                    for bucket in 0..self.partitions.len() {
+                    for bucket in 0..buckets.len() {
                         // Get 2 labels to retrieve
                         let (peer1, label1) =
                             self.next_label(&mut bucket_map, bucket, dummy, &mut dummy_count);
                         let (peer2, label2) =
                             self.next_label(&mut bucket_map, bucket, dummy, &mut dummy_count);
 
-                        let num = self.buckets[bucket].num_tuples();
-                        let lmid = self.buckets[bucket].get_lmid(0);
+                        let num = buckets[bucket].num_tuples();
+                        let lmid = buckets[bucket].get_lmid(0);
 
                         // Compare chosen labels to the bucket's lmid
                         let cmp1 = util::label_cmp(&label1[..], lmid);
@@ -1293,7 +1187,7 @@ impl<'a> PungClient<'a> {
 
             db::RetScheme::Tree => {
                 for _ in 0..retries {
-                    for bucket in 0..self.partitions.len() {
+                    for bucket in 0..buckets.len() {
                         // Get 2 labels to retrieve
                         let (peer1, label1) =
                             self.next_label(&mut bucket_map, bucket, dummy, &mut dummy_count);
@@ -1301,8 +1195,8 @@ impl<'a> PungClient<'a> {
                             self.next_label(&mut bucket_map, bucket, dummy, &mut dummy_count);
 
                         // Number of tuples and lowest level in collection 1 (lmid)
-                        let num = self.buckets[bucket].num_tuples();
-                        let lmid = self.buckets[bucket].get_lmid(0);
+                        let num = buckets[bucket].num_tuples();
+                        let lmid = buckets[bucket].get_lmid(0);
 
                         // Compare labels to lmid
                         let cmp1 = util::label_cmp(&label1[..], lmid);
@@ -1498,6 +1392,7 @@ impl<'a> PungClient<'a> {
     fn retr_hybrid4(
         &'a self,
         mut bucket_map: HashMap<usize, Vec<(&'a PungPeer, Vec<u8>)>>,
+        buckets: &Vec<BucketInfo>,
         scope: &gj::WaitScope,
         port: &mut gjio::EventPort,
     ) -> Result<Vec<Vec<u8>>, Error> {
@@ -1516,9 +1411,9 @@ impl<'a> PungClient<'a> {
             // as the scheme below. We leave it to be fixed later.
             db::RetScheme::Explicit => {
                 // Get labels explicitly
-                let explicit_labels = self.get_explicit_labels(scope, port)?;
+                let explicit_labels = self.get_explicit_labels(scope, port, &buckets)?;
 
-                for bucket in 0..self.partitions.len() {
+                for bucket in 0..buckets.len() {
                     // Available collections
                     let mut available: HashSet<usize> = (0..9).collect();
 
@@ -1549,7 +1444,7 @@ impl<'a> PungClient<'a> {
                         &mut dummy_count,
                     ));
 
-                    let lmids = self.buckets[bucket].get_lmids();
+                    let lmids = buckets[bucket].get_lmids();
                     let bucket_labels = &explicit_labels[&bucket];
 
                     for &(peer, ref label) in &label_list {
@@ -1653,9 +1548,9 @@ impl<'a> PungClient<'a> {
             // as the scheme below. We leave it to be fixed later.
             db::RetScheme::Bloom => {
                 // Get labels explicitly
-                let bloom_filters = self.get_bloom_filter(scope, port)?;
+                let bloom_filters = self.get_bloom_filter(scope, port, &buckets)?;
 
-                for bucket in 0..self.partitions.len() {
+                for bucket in 0..buckets.len() {
                     // Available collections
                     let mut available: HashSet<usize> = (0..9).collect();
 
@@ -1686,9 +1581,9 @@ impl<'a> PungClient<'a> {
                         &mut dummy_count,
                     ));
 
-                    let lmids = self.buckets[bucket].get_lmids();
+                    let lmids = buckets[bucket].get_lmids();
                     let bucket_blooms = &bloom_filters[&bucket];
-                    let num = self.buckets[bucket].num_tuples();
+                    let num = buckets[bucket].num_tuples();
 
                     for &(peer, ref label) in &label_list {
                         let mut c_i = 3; // last collection
@@ -2022,19 +1917,21 @@ impl<'a> PungClient<'a> {
         peer_names: &[&str],
         scope: &gj::WaitScope,
         port: &mut gjio::EventPort,
+        partitions: &Vec<Vec<u8>>,
+        buckets: &Vec<BucketInfo>
     ) -> Result<Vec<Vec<u8>>, Error> {
         if peer_names.len() as u32 > self.ret_rate {
             return Err(Error::failed("Number of peers exceeds rate".to_string()));
         }
 
-        let bucket_map = self.schedule(peer_names)?;
+        let bucket_map = self.schedule(peer_names, partitions)?;
 
         match self.opt_scheme {
             db::OptScheme::Normal | db::OptScheme::Aliasing => {
-                self.retr_normal(bucket_map, scope, port)
+                self.retr_normal(bucket_map, buckets, scope, port)
             }
-            db::OptScheme::Hybrid2 => self.retr_hybrid2(bucket_map, scope, port),
-            db::OptScheme::Hybrid4 => self.retr_hybrid4(bucket_map, scope, port),
+            db::OptScheme::Hybrid2 => self.retr_hybrid2(bucket_map, buckets, scope, port),
+            db::OptScheme::Hybrid4 => self.retr_hybrid4(bucket_map, buckets, scope, port),
         }
     }
 }
