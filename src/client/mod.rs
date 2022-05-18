@@ -202,6 +202,151 @@ impl<'a> PungClient<'a> {
         }
     }
 
+    pub fn dial(&mut self, recipient: &str, scope: &gj::WaitScope, port: &mut gjio::EventPort) -> Result<u64, Error> {
+        if !self.peers.contains_key(&recipient) {
+            return Err(Error::failed("Invalid recipient name".to_string()));
+        }
+
+        let peer = &self.peers[recipient];
+        let mut send_request = self.conn.send_request();
+        send_request.get().set_id(self.id);
+        send_request.get().set_round(self.round);
+
+        println!("Dialing {}", recipient);
+
+        {
+            let mut tuple_list = send_request.get().init_tuples(msgs.len() as u32);
+            let mut idx: u32 = 0;
+            let mut measurement_byte_count = 0;
+
+            for msg in msgs.drain(..) {
+                let (mut c, mut mac) = pcrypto::encrypt(&peer.keys.k_e[..], self.round, &msg[..]);
+
+                let mut tuple = pcrypto::gen_label(
+                    &peer.keys.k_l[..],
+                    self.round,
+                    peer.uid_peer,
+                    idx as u64,
+                    0,
+                );
+
+                // If we are using aliasing, generate an extra label
+                // and make sure it falls in a separate bucket
+                if self.opt_scheme >= db::OptScheme::Aliasing {
+                    let bucket_idx = util::bucket_idx(&tuple, &self.partitions);
+
+                    let mut label_alias = pcrypto::gen_label(
+                        &peer.keys.k_l2[..],
+                        self.round,
+                        peer.uid_peer,
+                        idx as u64,
+                        0,
+                    );
+
+                    let mut bucket_alias_idx = util::bucket_idx(&label_alias, &self.partitions);
+
+                    let mut collision_count = 1; // count collisions of labels to the same bucket
+
+                    while bucket_idx == bucket_alias_idx {
+                        label_alias = pcrypto::gen_label(
+                            &peer.keys.k_l2[..],
+                            self.round,
+                            peer.uid_peer,
+                            idx as u64,
+                            collision_count,
+                        );
+
+                        bucket_alias_idx = util::bucket_idx(&label_alias, &self.partitions);
+                        collision_count += 1;
+                    }
+
+                    // Postcondtion: the two labels fall in different buckets
+
+                    tuple.append(&mut label_alias);
+                }
+
+                tuple.append(&mut c);
+                tuple.append(&mut mac);
+
+                measurement_byte_count += tuple.len();
+
+                tuple_list.set(idx as u32, &tuple[..]);
+                idx += 1;
+            }
+
+            println!("Upload (send rpc) {} bytes", measurement_byte_count + 16);
+        }
+
+        // get RPC response which contains total number of tuples and lmids
+
+        let mut total_tuples: u64 = 0;
+
+        let res_ptr = send_request.send().promise.wait(scope, port)?;
+        let response = res_ptr.get()?;
+
+        let buckets_num = response.get_num_messages()?;
+        assert_eq!(buckets_num.len(), self.ret_rate);
+
+        if self.opt_scheme == db::OptScheme::Hybrid2 {
+            let buckets_lmid = response.get_min_labels()?;
+            assert_eq!(buckets_num.len(), buckets_lmid.len());
+
+            for i in 0..buckets_num.len() {
+                self.buckets.push(BucketInfo {
+                    num: buckets_num.get(i),
+                    lmid: vec![buckets_lmid.get(i)?.to_vec()],
+                });
+
+                total_tuples += buckets_num.get(i);
+            }
+
+            // This accounts for: 8 bytes (64 bits) for each bucket number entry
+            // and the Lmid label
+            println!(
+                "Download (send rpc) {} bytes",
+                (buckets_num.len() * 8) + (buckets_lmid.len() * db::LABEL_SIZE as u32)
+            );
+        } else if self.opt_scheme == db::OptScheme::Hybrid4 {
+            let buckets_lmid = response.get_min_labels()?;
+            assert_eq!(buckets_num.len() * 3, buckets_lmid.len()); // delimeters per bucket
+
+            for i in 0..buckets_num.len() {
+                let mut lmid = Vec::with_capacity(3);
+
+                for j in 0..3 {
+                    // collections
+                    lmid.push(buckets_lmid.get(3 * i + j)?.to_vec());
+                }
+
+                self.buckets.push(BucketInfo {
+                    num: buckets_num.get(i),
+                    lmid: lmid,
+                });
+                total_tuples += buckets_num.get(i);
+            }
+
+            // This accounts for: 8 bytes (64 bits) for each bucket number entry
+            // and the 3 Lmid labels per bucket
+            println!(
+                "Download (send rpc) {} bytes",
+                (buckets_num.len() * 8) + (buckets_lmid.len() * db::LABEL_SIZE as u32)
+            );
+        } else {
+            for i in 0..buckets_num.len() {
+                self.buckets.push(BucketInfo {
+                    num: buckets_num.get(i),
+                    lmid: Vec::new(),
+                });
+                total_tuples += buckets_num.get(i);
+            }
+
+            // 8 bytes (64 bits) for each bucket number entry
+            println!("Download (send rpc) {} bytes", buckets_num.len() * 8);
+        }
+
+        Ok(total_tuples)
+    }
+
     pub fn get_round(&self) -> u64 {
         self.round
     }

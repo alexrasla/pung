@@ -30,6 +30,7 @@ use util;
 enum Phase {
     Sending,
     Receiving,
+    Dailing
 }
 
 struct SendCtx {

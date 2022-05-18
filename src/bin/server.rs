@@ -147,8 +147,10 @@ fn main() {
 
             let index = worker.index();
             let dbase = Rc::new(RefCell::new(db::Database::new(ret_scheme, opt_scheme, buckets, depth)));
+            let dial_dbase = Rc::new(RefCell::new(db::Database::new(ret_scheme, opt_scheme, buckets, depth)));
 
             let send_handle = send_dataflow::graph(&mut worker, dbase.clone(), buckets);
+            let dial_handle = send_dataflow::graph(&mut worker, dial_dbase.clone(), buckets);
 
             let worker_port = port + index; // port of this worker
             let addr = FromStr::from_str(&format!("{}:{}", &rpc_addr, worker_port)).unwrap();

@@ -165,50 +165,55 @@ pub fn main() {
             //        std::thread::sleep(std::time::Duration::new(5, 0));
 
             let start_round = PreciseTime::now();
-            for _ in 0..rounds {
+            for rnd in 0..rounds {
 
                 //      println!("{} - Sending {} tuples for round {}", unique_id, send_rate, client.get_round());
+                if rnd % 5 == 0 {
+                    println!("{} - Dialing for round {}", unique_id, client.get_round());
+                    client.dial(&peer_name, &wait_scope, &mut event_port);
+                } else {
 
-                // create random message
-                let mut messages = Vec::with_capacity(send_rate as usize);
+                    // create random message
+                    let mut messages = Vec::with_capacity(send_rate as usize);
 
-                for i in 0..send_rate {
-                    let msg = format!("msg #{} from {}", i, unique_id).into_bytes();
-                    messages.push(msg);
-                }
+                    for i in 0..send_rate {
+                        let msg = format!("msg #{} from {}", i, unique_id).into_bytes();
+                        messages.push(msg);
+                    }
 
-                let start = PreciseTime::now();
+                    let start = PreciseTime::now();
 
-                // send tuple
-                client.send(&peer_name, &mut messages, &wait_scope, &mut event_port)?;
+                    // send tuple
+                    client.send(&peer_name, &mut messages, &wait_scope, &mut event_port)?;
 
-                let end = PreciseTime::now();
-                let duration = start.to(end);
+                    let end = PreciseTime::now();
+                    let duration = start.to(end);
 
-                println!("send ({} msgs): {:?} usec", send_rate, duration.num_microseconds().unwrap());
+                    println!("send ({} msgs): {:?} usec", send_rate, duration.num_microseconds().unwrap());
 
 
-                // retrieve msg
-                //            println!("{} - Retrieving a message for round {}", unique_id, client.get_round());
+                    // retrieve msg
+                    //            println!("{} - Retrieving a message for round {}", unique_id, client.get_round());
 
-                let start = PreciseTime::now();
+                    let start = PreciseTime::now();
 
-                // create a ret request
-                let mut peers: Vec<&str> = vec![];
+                    // create a ret request
+                    let mut peers: Vec<&str> = vec![];
 
-                for _ in 0..ret_rate {
-                    peers.push(&peer_name);
-                }
+                    for _ in 0..ret_rate {
+                        peers.push(&peer_name);
+                    }
 
-                let msgs = client.retr(&peers[..], &wait_scope, &mut event_port)?;
+                    let msgs = client.retr(&peers[..], &wait_scope, &mut event_port)?;
 
-                let end = PreciseTime::now();
-                println!("retr ({} msgs): {:?} usec",
-                         msgs.len(),
-                         start.to(end).num_microseconds().unwrap());
+                    let end = PreciseTime::now();
+                    println!("retr ({} msgs): {:?} usec",
+                            msgs.len(),
+                            start.to(end).num_microseconds().unwrap());
 
-                for msg in msgs {
-                    println!("{} - Retrieved msg is {}", unique_id, String::from_utf8(msg).unwrap());
+                    for msg in msgs {
+                        println!("{} - Retrieved msg is {}", unique_id, String::from_utf8(msg).unwrap());
+                    }     
                 }
 
                 client.inc_round(1);
