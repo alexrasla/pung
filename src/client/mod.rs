@@ -221,21 +221,21 @@ impl<'a> PungClient<'a> {
         self.round
     }
 
-    pub fn get_partitions(&self) -> &Vec<Vec<u8>> {
-        &self.partitions
-    }
+    // pub fn get_partitions(&self) -> &Vec<Vec<u8>> {
+    //     &self.partitions
+    // }
 
-    pub fn get_contact_partitions(&self) -> &Vec<Vec<u8>> {
-        &self.contact_partitions
-    }
+    // pub fn get_contact_partitions(&self) -> &Vec<Vec<u8>> {
+    //     &self.contact_partitions
+    // }
 
-    pub fn get_buckets(&self) -> &Vec<BucketInfo> {
-        &self.buckets
-    }
+    // pub fn get_buckets(&self) -> &Vec<BucketInfo> {
+    //     self.buckets
+    // }
 
-    pub fn get_contact_buckets(&self) -> &Vec<BucketInfo> {
-        &self.contact_buckets
-    }
+    // pub fn get_contact_buckets(&self) -> &Vec<BucketInfo> {
+    //     self.contact_buckets
+    // }
 
     pub fn inc_round(&mut self, val: u64) {
         self.round += val;
@@ -354,9 +354,20 @@ impl<'a> PungClient<'a> {
         msgs: &mut Vec<Vec<u8>>,
         scope: &gj::WaitScope,
         port: &mut gjio::EventPort,
-        partitions: &Vec<Vec<u8>>,
-        buckets: &mut Vec<BucketInfo>,
-    ) -> Result<u64, Error> {
+        curr_type: &str) -> Result<u64, Error> {
+        
+        let buckets = if curr_type == "CONTACT"{
+            &mut self.contact_buckets
+        } else {
+            &mut self.buckets
+        };
+
+        let partitions = if curr_type == "CONTACT"{
+            &self.contact_partitions
+        } else {
+            &self.partitions
+        };
+            
         if !self.peers.contains_key(&recipient) {
             return Err(Error::failed("Invalid recipient name".to_string()));
         } else if msgs.is_empty() {
@@ -634,8 +645,14 @@ impl<'a> PungClient<'a> {
         &self,
         scope: &gj::WaitScope,
         port: &mut gjio::EventPort,
-        buckets: &Vec<BucketInfo>
+        bucket_type: &str
     ) -> Result<HashMap<usize, HashMap<usize, Vec<Vec<u8>>>>, Error> {
+        let buckets = if bucket_type == "CONTACT"{
+            &self.contact_buckets
+        } else {
+            &self.buckets
+        };
+           
         let mut map_request = self.conn.get_mapping_request();
         map_request.get().set_round(self.round);
 
@@ -693,8 +710,14 @@ impl<'a> PungClient<'a> {
         &self,
         scope: &gj::WaitScope,
         port: &mut gjio::EventPort,
-        buckets: &Vec<BucketInfo>
+        bucket_type: &str
     ) -> Result<HashMap<usize, HashMap<usize, bloomfilter::Bloom>>, Error> {
+        let buckets = if bucket_type == "CONTACT"{
+            &self.contact_buckets
+        } else {
+            &self.buckets
+        };
+
         let mut bloom_request = self.conn.get_bloom_request();
         bloom_request.get().set_round(self.round);
 
@@ -759,10 +782,17 @@ impl<'a> PungClient<'a> {
     fn retr_normal(
         &'a self,
         mut bucket_map: HashMap<usize, Vec<(&'a PungPeer, Vec<u8>)>>,
-        buckets: &Vec<BucketInfo>,
+        bucket_type: &str,
         scope: &gj::WaitScope,
         port: &mut gjio::EventPort,
     ) -> Result<Vec<Vec<u8>>, Error> {
+
+        let buckets = if bucket_type == "CONTACT"{
+            &self.contact_buckets
+        } else {
+            &self.buckets
+        };
+
         let retries = self.max_retries();
         let dummy = &self.peers["dummy"];
         let mut dummy_count = 0;
@@ -772,7 +802,7 @@ impl<'a> PungClient<'a> {
         match self.ret_scheme {
             db::RetScheme::Explicit => {
                 // Get labels explicitly
-                let explicit_labels = self.get_explicit_labels(scope, port, &buckets)?;
+                let explicit_labels = self.get_explicit_labels(scope, port, bucket_type)?;
 
                 for _ in 0..retries {
                     for bucket in 0..buckets.len() {
@@ -809,7 +839,7 @@ impl<'a> PungClient<'a> {
 
             db::RetScheme::Bloom => {
                 // Get bloom filter
-                let bloom_filters = self.get_bloom_filter(scope, port, &buckets)?;
+                let bloom_filters = self.get_bloom_filter(scope, port, bucket_type)?;
 
                 for _ in 0..retries {
                     for bucket in 0..buckets.len() {
@@ -880,10 +910,17 @@ impl<'a> PungClient<'a> {
     fn retr_hybrid2(
         &'a self,
         mut bucket_map: HashMap<usize, Vec<(&'a PungPeer, Vec<u8>)>>,
-        buckets: &Vec<BucketInfo>,
+        bucket_type: &str,
         scope: &gj::WaitScope,
         port: &mut gjio::EventPort,
     ) -> Result<Vec<Vec<u8>>, Error> {
+        
+        let buckets = if bucket_type == "CONTACT"{
+            &self.contact_buckets
+        } else {
+            &self.buckets
+        };
+
         let retries = self.max_retries();
         let dummy = &self.peers["dummy"];
         let mut dummy_count = 0;
@@ -894,7 +931,7 @@ impl<'a> PungClient<'a> {
         match self.ret_scheme {
             db::RetScheme::Explicit => {
                 // Get labels explicitly
-                let explicit_labels = self.get_explicit_labels(scope, port, &buckets)?;
+                let explicit_labels = self.get_explicit_labels(scope, port, bucket_type)?;
 
                 for _ in 0..retries {
                     for bucket in 0..buckets.len() {
@@ -1030,7 +1067,7 @@ impl<'a> PungClient<'a> {
 
             db::RetScheme::Bloom => {
                 // Get bloom filters
-                let bloom_filters = self.get_bloom_filter(scope, port, &buckets)?;
+                let bloom_filters = self.get_bloom_filter(scope, port, bucket_type)?;
 
                 for _ in 0..retries {
                     for bucket in 0..buckets.len() {
@@ -1392,10 +1429,16 @@ impl<'a> PungClient<'a> {
     fn retr_hybrid4(
         &'a self,
         mut bucket_map: HashMap<usize, Vec<(&'a PungPeer, Vec<u8>)>>,
-        buckets: &Vec<BucketInfo>,
+        bucket_type: &str,
         scope: &gj::WaitScope,
         port: &mut gjio::EventPort,
     ) -> Result<Vec<Vec<u8>>, Error> {
+        let buckets = if bucket_type == "CONTACT"{
+            &self.contact_buckets
+        } else {
+            &self.buckets
+        };
+        
         let dummy = &self.peers["dummy"];
         let mut dummy_count = 0;
         let mut rng = rand::ChaChaRng::new_unseeded();
@@ -1411,7 +1454,7 @@ impl<'a> PungClient<'a> {
             // as the scheme below. We leave it to be fixed later.
             db::RetScheme::Explicit => {
                 // Get labels explicitly
-                let explicit_labels = self.get_explicit_labels(scope, port, &buckets)?;
+                let explicit_labels = self.get_explicit_labels(scope, port, bucket_type)?;
 
                 for bucket in 0..buckets.len() {
                     // Available collections
@@ -1548,7 +1591,7 @@ impl<'a> PungClient<'a> {
             // as the scheme below. We leave it to be fixed later.
             db::RetScheme::Bloom => {
                 // Get labels explicitly
-                let bloom_filters = self.get_bloom_filter(scope, port, &buckets)?;
+                let bloom_filters = self.get_bloom_filter(scope, port, bucket_type)?;
 
                 for bucket in 0..buckets.len() {
                     // Available collections
@@ -1917,9 +1960,15 @@ impl<'a> PungClient<'a> {
         peer_names: &[&str],
         scope: &gj::WaitScope,
         port: &mut gjio::EventPort,
-        partitions: &Vec<Vec<u8>>,
-        buckets: &Vec<BucketInfo>
+        curr_type: &str
     ) -> Result<Vec<Vec<u8>>, Error> {
+
+        let partitions = if curr_type == "CONTACT"{
+            &self.contact_partitions
+        } else {
+            &self.partitions
+        };
+
         if peer_names.len() as u32 > self.ret_rate {
             return Err(Error::failed("Number of peers exceeds rate".to_string()));
         }
@@ -1928,10 +1977,10 @@ impl<'a> PungClient<'a> {
 
         match self.opt_scheme {
             db::OptScheme::Normal | db::OptScheme::Aliasing => {
-                self.retr_normal(bucket_map, buckets, scope, port)
+                self.retr_normal(bucket_map, curr_type, scope, port)
             }
-            db::OptScheme::Hybrid2 => self.retr_hybrid2(bucket_map, buckets, scope, port),
-            db::OptScheme::Hybrid4 => self.retr_hybrid4(bucket_map, buckets, scope, port),
+            db::OptScheme::Hybrid2 => self.retr_hybrid2(bucket_map, curr_type, scope, port),
+            db::OptScheme::Hybrid4 => self.retr_hybrid4(bucket_map, curr_type, scope, port),
         }
     }
 }

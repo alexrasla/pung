@@ -175,25 +175,34 @@ pub fn main() {
             for rnd in 0..rounds {
 
                 //      println!("{} - Sending {} tuples for round {}", unique_id, send_rate, client.get_round());
+            
+
+                // create random message
+                let mut messages = Vec::with_capacity(send_rate as usize);
+
+                for i in 0..send_rate {
+                    let msg = format!("msg #{} from {}", i, unique_id).into_bytes();
+                    messages.push(msg);
+                }
+
                 if rnd % 5 == 0 {
                     println!("{} - Dialing for round {}", unique_id, client.get_round());
-                    client.send(&peer_name, &wait_scope, &mut event_port,
-                        &client.get_contact_partitions(), &client.get_contact_buckets());
+                    client.send(&peer_name,  &mut messages, &wait_scope, &mut event_port, "CONTACT");
+
+                     // create a ret request
+                     let mut peers: Vec<&str> = vec![];
+
+                     for _ in 0..ret_rate {
+                         peers.push(&peer_name);
+                     }
+                     
+                    let msgs = client.retr(&peers[..], &wait_scope, &mut event_port, "CONTACT")?;
                 } else {
-
-                    // create random message
-                    let mut messages = Vec::with_capacity(send_rate as usize);
-
-                    for i in 0..send_rate {
-                        let msg = format!("msg #{} from {}", i, unique_id).into_bytes();
-                        messages.push(msg);
-                    }
 
                     let start = PreciseTime::now();
 
                     // send tuple
-                    client.send(&peer_name, &wait_scope, &mut event_port,
-                        &client.get_partitions(), &client.get_buckets());
+                    client.send(&peer_name, &mut messages, &wait_scope, &mut event_port,"MESSAGE");
 
                     let end = PreciseTime::now();
                     let duration = start.to(end);
@@ -213,7 +222,7 @@ pub fn main() {
                         peers.push(&peer_name);
                     }
 
-                    let msgs = client.retr(&peers[..], &wait_scope, &mut event_port)?;
+                    let msgs = client.retr(&peers[..], &wait_scope, &mut event_port, "MESSAGE")?;
 
                     let end = PreciseTime::now();
                     println!("retr ({} msgs): {:?} usec",

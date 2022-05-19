@@ -29,8 +29,7 @@ use util;
 #[derive(PartialEq)]
 enum Phase {
     Sending,
-    Receiving,
-    Dailing
+    Receiving
 }
 
 struct SendCtx {
