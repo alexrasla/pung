@@ -179,59 +179,55 @@ pub fn main() {
 
                 // create random message
                 let mut messages = Vec::with_capacity(send_rate as usize);
-
-                for i in 0..send_rate {
-                    let msg = format!("msg #{} from {}", i, unique_id).into_bytes();
-                    messages.push(msg);
-                }
+                let mut is_dial = false;
+                let mut k = ret_rate;
 
                 if rnd % 5 == 0 {
                     println!("{} - Dialing for round {}", unique_id, client.get_round());
-                    client.send(&peer_name,  &mut messages, &wait_scope, &mut event_port, "CONTACT");
-
-                     // create a ret request
-                     let mut peers: Vec<&str> = vec![];
-
-                     for _ in 0..ret_rate {
-                         peers.push(&peer_name);
-                     }
-                     
-                    let msgs = client.retr(&peers[..], &wait_scope, &mut event_port, "CONTACT")?;
+                    is_dial = true;
+                    k = contact_size;
+                    let msg = format!("Hello").into_bytes();
+                    messages.push(msg);
                 } else {
+                    for i in 0..send_rate {
+                        let msg = format!("msg #{} from {}", i, unique_id).into_bytes();
+                        messages.push(msg);
+                    } 
+                }
 
-                    let start = PreciseTime::now();
+                let start = PreciseTime::now();
 
-                    // send tuple
-                    client.send(&peer_name, &mut messages, &wait_scope, &mut event_port,"MESSAGE");
+                // send tuple
+                client.send(&peer_name, &mut messages, &wait_scope, &mut event_port, is_dial);
 
-                    let end = PreciseTime::now();
-                    let duration = start.to(end);
+                let end = PreciseTime::now();
+                let duration = start.to(end);
 
-                    println!("send ({} msgs): {:?} usec", send_rate, duration.num_microseconds().unwrap());
+                // TODO: Do we need to change this send_rate?
+                println!("send ({} msgs): {:?} usec", send_rate, duration.num_microseconds().unwrap());
 
 
-                    // retrieve msg
-                    //            println!("{} - Retrieving a message for round {}", unique_id, client.get_round());
+                // retrieve msg
+                println!("{} - Retrieving a message for round {}", unique_id, client.get_round());
 
-                    let start = PreciseTime::now();
+                let start = PreciseTime::now();
 
-                    // create a ret request
-                    let mut peers: Vec<&str> = vec![];
+                // create a ret request
+                let mut peers: Vec<&str> = vec![];
 
-                    for _ in 0..ret_rate {
-                        peers.push(&peer_name);
-                    }
+                for _ in 0..k {
+                    peers.push(&peer_name);
+                }
 
-                    let msgs = client.retr(&peers[..], &wait_scope, &mut event_port, "MESSAGE")?;
+                let msgs = client.retr(&peers[..], &wait_scope, &mut event_port, is_dial)?;
 
-                    let end = PreciseTime::now();
-                    println!("retr ({} msgs): {:?} usec",
-                            msgs.len(),
-                            start.to(end).num_microseconds().unwrap());
+                let end = PreciseTime::now();
+                println!("retr ({} msgs): {:?} usec",
+                        msgs.len(),
+                        start.to(end).num_microseconds().unwrap());
 
-                    for msg in msgs {
-                        println!("{} - Retrieved msg is {}", unique_id, String::from_utf8(msg).unwrap());
-                    }     
+                for msg in msgs {
+                    println!("{} - Retrieved msg is {}", unique_id, String::from_utf8(msg).unwrap());
                 }
 
                 client.inc_round(1);

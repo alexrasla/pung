@@ -354,18 +354,24 @@ impl<'a> PungClient<'a> {
         msgs: &mut Vec<Vec<u8>>,
         scope: &gj::WaitScope,
         port: &mut gjio::EventPort,
-        curr_type: &str) -> Result<u64, Error> {
+        is_dial: bool) -> Result<u64, Error> {
         
-        let buckets = if curr_type == "CONTACT"{
+        let buckets = if is_dial {
             &mut self.contact_buckets
         } else {
             &mut self.buckets
         };
 
-        let partitions = if curr_type == "CONTACT"{
+        let partitions = if is_dial {
             &self.contact_partitions
         } else {
             &self.partitions
+        };
+
+        let ret_rate = if is_dial {
+            self.contact_size
+        } else {
+            self.ret_rate
         };
             
         if !self.peers.contains_key(&recipient) {
@@ -450,7 +456,7 @@ impl<'a> PungClient<'a> {
         let response = res_ptr.get()?;
 
         let buckets_num = response.get_num_messages()?;
-        assert_eq!(buckets_num.len(), self.ret_rate);
+        assert_eq!(buckets_num.len(), ret_rate);
 
         if self.opt_scheme == db::OptScheme::Hybrid2 {
             let buckets_lmid = response.get_min_labels()?;
@@ -645,9 +651,9 @@ impl<'a> PungClient<'a> {
         &self,
         scope: &gj::WaitScope,
         port: &mut gjio::EventPort,
-        bucket_type: &str
+        is_dial: bool
     ) -> Result<HashMap<usize, HashMap<usize, Vec<Vec<u8>>>>, Error> {
-        let buckets = if bucket_type == "CONTACT"{
+        let buckets = if is_dial {
             &self.contact_buckets
         } else {
             &self.buckets
@@ -710,9 +716,9 @@ impl<'a> PungClient<'a> {
         &self,
         scope: &gj::WaitScope,
         port: &mut gjio::EventPort,
-        bucket_type: &str
+        is_dial: bool
     ) -> Result<HashMap<usize, HashMap<usize, bloomfilter::Bloom>>, Error> {
-        let buckets = if bucket_type == "CONTACT"{
+        let buckets = if is_dial {
             &self.contact_buckets
         } else {
             &self.buckets
@@ -782,12 +788,12 @@ impl<'a> PungClient<'a> {
     fn retr_normal(
         &'a self,
         mut bucket_map: HashMap<usize, Vec<(&'a PungPeer, Vec<u8>)>>,
-        bucket_type: &str,
         scope: &gj::WaitScope,
         port: &mut gjio::EventPort,
+        is_dial: bool,
     ) -> Result<Vec<Vec<u8>>, Error> {
 
-        let buckets = if bucket_type == "CONTACT"{
+        let buckets = if is_dial {
             &self.contact_buckets
         } else {
             &self.buckets
@@ -802,7 +808,7 @@ impl<'a> PungClient<'a> {
         match self.ret_scheme {
             db::RetScheme::Explicit => {
                 // Get labels explicitly
-                let explicit_labels = self.get_explicit_labels(scope, port, bucket_type)?;
+                let explicit_labels = self.get_explicit_labels(scope, port, is_dial)?;
 
                 for _ in 0..retries {
                     for bucket in 0..buckets.len() {
@@ -839,7 +845,7 @@ impl<'a> PungClient<'a> {
 
             db::RetScheme::Bloom => {
                 // Get bloom filter
-                let bloom_filters = self.get_bloom_filter(scope, port, bucket_type)?;
+                let bloom_filters = self.get_bloom_filter(scope, port, is_dial)?;
 
                 for _ in 0..retries {
                     for bucket in 0..buckets.len() {
@@ -910,12 +916,12 @@ impl<'a> PungClient<'a> {
     fn retr_hybrid2(
         &'a self,
         mut bucket_map: HashMap<usize, Vec<(&'a PungPeer, Vec<u8>)>>,
-        bucket_type: &str,
         scope: &gj::WaitScope,
         port: &mut gjio::EventPort,
+        is_dial: bool
     ) -> Result<Vec<Vec<u8>>, Error> {
         
-        let buckets = if bucket_type == "CONTACT"{
+        let buckets = if is_dial {
             &self.contact_buckets
         } else {
             &self.buckets
@@ -931,7 +937,7 @@ impl<'a> PungClient<'a> {
         match self.ret_scheme {
             db::RetScheme::Explicit => {
                 // Get labels explicitly
-                let explicit_labels = self.get_explicit_labels(scope, port, bucket_type)?;
+                let explicit_labels = self.get_explicit_labels(scope, port, is_dial)?;
 
                 for _ in 0..retries {
                     for bucket in 0..buckets.len() {
@@ -1067,7 +1073,7 @@ impl<'a> PungClient<'a> {
 
             db::RetScheme::Bloom => {
                 // Get bloom filters
-                let bloom_filters = self.get_bloom_filter(scope, port, bucket_type)?;
+                let bloom_filters = self.get_bloom_filter(scope, port, is_dial)?;
 
                 for _ in 0..retries {
                     for bucket in 0..buckets.len() {
@@ -1429,11 +1435,11 @@ impl<'a> PungClient<'a> {
     fn retr_hybrid4(
         &'a self,
         mut bucket_map: HashMap<usize, Vec<(&'a PungPeer, Vec<u8>)>>,
-        bucket_type: &str,
         scope: &gj::WaitScope,
         port: &mut gjio::EventPort,
+        is_dial: bool
     ) -> Result<Vec<Vec<u8>>, Error> {
-        let buckets = if bucket_type == "CONTACT"{
+        let buckets = if is_dial {
             &self.contact_buckets
         } else {
             &self.buckets
@@ -1454,7 +1460,7 @@ impl<'a> PungClient<'a> {
             // as the scheme below. We leave it to be fixed later.
             db::RetScheme::Explicit => {
                 // Get labels explicitly
-                let explicit_labels = self.get_explicit_labels(scope, port, bucket_type)?;
+                let explicit_labels = self.get_explicit_labels(scope, port, is_dial)?;
 
                 for bucket in 0..buckets.len() {
                     // Available collections
@@ -1591,7 +1597,7 @@ impl<'a> PungClient<'a> {
             // as the scheme below. We leave it to be fixed later.
             db::RetScheme::Bloom => {
                 // Get labels explicitly
-                let bloom_filters = self.get_bloom_filter(scope, port, bucket_type)?;
+                let bloom_filters = self.get_bloom_filter(scope, port, is_dial)?;
 
                 for bucket in 0..buckets.len() {
                     // Available collections
@@ -1960,16 +1966,22 @@ impl<'a> PungClient<'a> {
         peer_names: &[&str],
         scope: &gj::WaitScope,
         port: &mut gjio::EventPort,
-        curr_type: &str
+        is_dial: bool
     ) -> Result<Vec<Vec<u8>>, Error> {
 
-        let partitions = if curr_type == "CONTACT"{
+        let partitions = if is_dial {
             &self.contact_partitions
         } else {
             &self.partitions
         };
 
-        if peer_names.len() as u32 > self.ret_rate {
+        let ret_rate = if is_dial {
+            self.contact_size
+        } else {
+            self.ret_rate
+        };
+
+        if peer_names.len() as u32 > ret_rate {
             return Err(Error::failed("Number of peers exceeds rate".to_string()));
         }
 
@@ -1977,10 +1989,10 @@ impl<'a> PungClient<'a> {
 
         match self.opt_scheme {
             db::OptScheme::Normal | db::OptScheme::Aliasing => {
-                self.retr_normal(bucket_map, curr_type, scope, port)
+                self.retr_normal(bucket_map, scope, port, is_dial)
             }
-            db::OptScheme::Hybrid2 => self.retr_hybrid2(bucket_map, curr_type, scope, port),
-            db::OptScheme::Hybrid4 => self.retr_hybrid4(bucket_map, curr_type, scope, port),
+            db::OptScheme::Hybrid2 => self.retr_hybrid2(bucket_map, scope, port, is_dial),
+            db::OptScheme::Hybrid4 => self.retr_hybrid4(bucket_map, scope, port, is_dial),
         }
     }
 }
