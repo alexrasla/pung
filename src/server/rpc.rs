@@ -340,8 +340,10 @@ impl pung_rpc::Server for PungRpc {
         let ret_promise;
         {
             let ctx = if self.round % 5 == 0 {
+                println!("Dial CTX for round {}", self.round);
                 &mut self.dial_ctx
-            } else{
+            } else {
+                println!("Send CTX for round {}", self.round);
                 &mut self.send_ctx
             };
 
@@ -372,9 +374,12 @@ impl pung_rpc::Server for PungRpc {
                 let tuple_data_list = pry!(req.get_tuples());
 
                 let send_fulfillers = &mut ctx.handler.fulfillers.borrow_mut();
+                
+                for (key, value) in &ctx.reqs {
+                    println!("Round {}, User {} -- {}: {}", self.round, id, key, value);
+                }
 
                 if round > self.round {
-                    println!("in send IF");
                     // Queue request if round > self.round
                     let queue_list = &mut ctx.queue.entry(round).or_insert_with(Vec::new);
 
@@ -401,17 +406,17 @@ impl pung_rpc::Server for PungRpc {
 
                     queue_list.push((id, tuple_list, fulfiller));
                 } else {
-
-                    println!("in send ELSE 1 {}", tuple_data_list.len());
                     
                     if !ctx.reqs.contains_key(&id) {
+                        
+                        println!("CTX does not contiain key {}", id);
                         return gj::Promise::err(Error::failed(
                             "Client is not synchronized.".to_string(),
                         ));
                     } else if ctx.reqs[&id] < tuple_data_list.len() {
                         return gj::Promise::err(Error::failed("Send rate exceeded.".to_string()));
                     }
-                    println!("in send ELSE 2 {}", tuple_data_list.len());
+                    
                     if let Some(entry) = ctx.reqs.get_mut(&id) {
                         *entry -= tuple_data_list.len() as u32;
                     }
@@ -508,7 +513,6 @@ impl pung_rpc::Server for PungRpc {
                 if !self.dial_ctx.reqs.values().any(|&x| x > 0) && self.phase == Phase::Sending
                 && self.dial_ctx.count >= self.min_messages
             {
-                println!("Here, dial_ctx");
 
                 for t in &self.extra_tuples {
                     self.dial_ctx.handler.input.send(t.clone());

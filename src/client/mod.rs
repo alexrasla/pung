@@ -221,22 +221,6 @@ impl<'a> PungClient<'a> {
         self.round
     }
 
-    // pub fn get_partitions(&self) -> &Vec<Vec<u8>> {
-    //     &self.partitions
-    // }
-
-    // pub fn get_contact_partitions(&self) -> &Vec<Vec<u8>> {
-    //     &self.contact_partitions
-    // }
-
-    // pub fn get_buckets(&self) -> &Vec<BucketInfo> {
-    //     self.buckets
-    // }
-
-    // pub fn get_contact_buckets(&self) -> &Vec<BucketInfo> {
-    //     self.contact_buckets
-    // }
-
     pub fn inc_round(&mut self, val: u64) {
         self.round += val;
         self.buckets.clear();
