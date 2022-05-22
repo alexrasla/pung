@@ -174,6 +174,8 @@ pub fn main() {
             let start_round = PreciseTime::now();
             for rnd in 0..rounds {
 
+                println!("--- ROUND {} ---", rnd);
+
                 //      println!("{} - Sending {} tuples for round {}", unique_id, send_rate, client.get_round());
             
 
@@ -190,7 +192,7 @@ pub fn main() {
                     messages.push(msg);
                 } else {
                     for i in 0..send_rate {
-                        let msg = format!("msg #{} from {}", i, unique_id).into_bytes();
+                        let msg = format!("Msg #{} from {}", i, unique_id).into_bytes();
                         messages.push(msg);
                     } 
                 }
@@ -204,7 +206,7 @@ pub fn main() {
                 let duration = start.to(end);
 
                 // TODO: Do we need to change this send_rate?
-                println!("send ({} msgs): {:?} usec", send_rate, duration.num_microseconds().unwrap());
+                println!("{} - Sent ({} msgs): {:?} usec", unique_id, send_rate, duration.num_microseconds().unwrap());
 
 
                 // retrieve msg
@@ -222,7 +224,7 @@ pub fn main() {
                 let msgs = client.retr(&peers[..], &wait_scope, &mut event_port, is_dial)?;
 
                 let end = PreciseTime::now();
-                println!("retr ({} msgs): {:?} usec",
+                println!("{} - Retrieved ({} msgs): {:?} usec", unique_id,
                         msgs.len(),
                         start.to(end).num_microseconds().unwrap());
 
@@ -235,7 +237,7 @@ pub fn main() {
 
             let end_round = PreciseTime::now();
             let duration = start_round.to(end_round);
-            println!("processed {} rounds in {} usec", rounds, duration.num_microseconds().unwrap());
+            println!("Processed {} rounds in {} usec", rounds, duration.num_microseconds().unwrap());
 
             client.close(&wait_scope, &mut event_port)?;
 

@@ -159,7 +159,9 @@ fn main() {
             pung::server::run_rpc(addr,
                                   worker.clone(),
                                   send_handle,
+                                  dial_handle,
                                   dbase,
+                                  dial_dbase,
                                   extra_tuples,
                                   min_messages,
                                   opt_scheme);
