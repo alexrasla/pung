@@ -152,12 +152,6 @@ impl pung_rpc::Server for PungRpc {
 
     // TODO: upgrade to be able to replace directory service key
     fn sync(&mut self, params: SyncParams, mut res: SyncResults) -> gj::Promise<(), Error> {
-        
-        let ctx = if self.round % 5 == 0 {
-            &mut self.dial_ctx
-        } else{
-            &mut self.send_ctx
-        };
 
         let id = pry!(params.get()).get_id();
 
@@ -167,12 +161,12 @@ impl pung_rpc::Server for PungRpc {
 
         // If we are already in receive phase, client has to wait for next send phase to begin
         if self.phase == Phase::Receiving {
-            println!("sync");
             res.get().set_round(self.round + 1);
         } else {
-            ctx.reqs.entry(id).or_insert(self.clients[&id]);
+            self.dial_ctx.reqs.entry(id).or_insert(self.clients[&id]);
+            self.send_ctx.reqs.entry(id).or_insert(self.clients[&id]);
             self.ret_ctx.reqs.entry(id).or_insert(0);
-            res.get().set_round(self.round);
+            res.get().set_round(self.round);      
         }
 
         gj::Promise::ok(())
@@ -327,23 +321,23 @@ impl pung_rpc::Server for PungRpc {
 
 
     fn send(&mut self, params: SendParams, mut res: SendResults) -> gj::Promise<(), Error> {
-        if self.phase == Phase::Sending{
-            println!("Server sending, in sending phase...")
-        }
-        if self.phase == Phase::Dialing{
-            println!("Server sending, in dialing phase...")
-        }
-        if self.phase == Phase::Receiving{
-            println!("Server sending, in receiving phase...")
-        }
+        // if self.phase == Phase::Sending{
+        //     println!("Server sending, in sending phase...")
+        // }
+        // if self.phase == Phase::Dialing{
+        //     println!("Server sending, in dialing phase...")
+        // }
+        // if self.phase == Phase::Receiving{
+        //     println!("Server sending, in receiving phase...")
+        // }
 
         let ret_promise;
         {
             let ctx = if self.round % 5 == 0 {
-                println!("Dial CTX for round {}", self.round);
+                // println!("Dial CTX for round {}", self.round);
                 &mut self.dial_ctx
             } else {
-                println!("Send CTX for round {}", self.round);
+                // println!("Send CTX for round {}", self.round);
                 &mut self.send_ctx
             };
 
@@ -365,7 +359,6 @@ impl pung_rpc::Server for PungRpc {
             let (promise, fulfiller) = gj::Promise::and_fulfiller();
 
             {
-
                 // Get tuples
                 if !req.has_tuples() {
                     return gj::Promise::err(Error::failed("Number of tuples sent is 0".to_string()));
@@ -374,10 +367,6 @@ impl pung_rpc::Server for PungRpc {
                 let tuple_data_list = pry!(req.get_tuples());
 
                 let send_fulfillers = &mut ctx.handler.fulfillers.borrow_mut();
-                
-                for (key, value) in &ctx.reqs {
-                    println!("Round {}, User {} -- {}: {}", self.round, id, key, value);
-                }
 
                 if round > self.round {
                     // Queue request if round > self.round
@@ -408,8 +397,6 @@ impl pung_rpc::Server for PungRpc {
                 } else {
                     
                     if !ctx.reqs.contains_key(&id) {
-                        
-                        println!("CTX does not contiain key {}", id);
                         return gj::Promise::err(Error::failed(
                             "Client is not synchronized.".to_string(),
                         ));
@@ -422,8 +409,11 @@ impl pung_rpc::Server for PungRpc {
                     }
 
                     for i in 0..tuple_data_list.len() {
+                        
                         let tuple_data = pry!(tuple_data_list.get(i));
                         let mut offset: usize = 0;
+
+                        // println!("tuple data list {}", i);
 
                         // If power of two, clone the tuple under the two provided labels
                         if self.opt_scheme >= db::OptScheme::Aliasing {
@@ -479,6 +469,10 @@ impl pung_rpc::Server for PungRpc {
                         }
                     }
                 }
+
+                for (key, value) in &ctx.reqs {
+                    println!("Round {}, User {} -- {}: {}", self.round, id, key, value);
+                }
             }
         
         
@@ -508,8 +502,12 @@ impl pung_rpc::Server for PungRpc {
         //    self.worker.step();
 
         // TODO: maybe add timeout? Right now it waits for all clients to send.
+        // for (key, value) in &self.ret_ctx.reqs {
+        //     println!("Round {}, User {} -- {}: {}", self.round, id, key, value);
+        // }
         if self.round % 5 == 0 {
             // Check to see if all clients have sent all their tuples
+            println!("dial {}, {}, {}", !self.dial_ctx.reqs.values().any(|&x| x > 0), self.phase == Phase::Sending, self.dial_ctx.count >= self.min_messages);
                 if !self.dial_ctx.reqs.values().any(|&x| x > 0) && self.phase == Phase::Sending
                 && self.dial_ctx.count >= self.min_messages
             {
@@ -546,11 +544,12 @@ impl pung_rpc::Server for PungRpc {
             }
         } else{
             // Check to see if all clients have sent all their tuples
-                println!("Here, before send_ctx");
+                println!("send {}, {}, {}", !self.send_ctx.reqs.values().any(|&x| x > 0), self.phase == Phase::Sending, self.send_ctx.count >= self.min_messages);
+                
                 if !self.send_ctx.reqs.values().any(|&x| x > 0) && self.phase == Phase::Sending
                 && self.send_ctx.count >= self.min_messages
             {
-                println!("Here, send_ctx");
+                // println!("Here, send_ctx");
                 for t in &self.extra_tuples {
                     self.send_ctx.handler.input.send(t.clone());
                 }
@@ -588,15 +587,9 @@ impl pung_rpc::Server for PungRpc {
 
 
     fn retr(&mut self, params: RetrParams, mut res: RetrResults) -> gj::Promise<(), Error> {
-        if self.phase == Phase::Sending{
-            println!("Server retreiving, in sending phase...")
-        }
-        if self.phase == Phase::Dialing{
-            println!("Server retreiving, in dialing phase...")
-        }
-        if self.phase == Phase::Receiving{
-            println!("Server retreiving, in receiving phase...")
-        }
+        // if self.phase == Phase::Receiving{
+        //     println!("Server retreiving, in receiving phase...")
+        // }
 
         let ctx = if self.round % 5 == 0 {
             &mut self.dial_ctx

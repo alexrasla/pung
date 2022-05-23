@@ -427,7 +427,10 @@ impl<'a> PungClient<'a> {
 
                 tuple_list.set(idx as u32, &tuple[..]);
                 idx += 1;
+                
             }
+
+            // println!("tuple list {}", tuple_list)
 
             println!("Upload (send rpc) {} bytes", measurement_byte_count + 16);
         }
