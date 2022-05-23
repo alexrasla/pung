@@ -248,7 +248,7 @@ impl pung_rpc::Server for PungRpc {
             return gj::Promise::err(Error::failed("in get_mapping, not a receive phase".to_string()));
         }
         
-        let db = if self.round % 5 == 0 {
+        let db = if round % 5 == 0 {
             self.dial_dbase.borrow()
         } else{
             self.dbase.borrow()
@@ -295,7 +295,7 @@ impl pung_rpc::Server for PungRpc {
             return gj::Promise::err(Error::failed("In get_bloom, not a receive phase".to_string()));
         }
 
-        let db = if self.round % 5 == 0 {
+        let db = if round % 5 == 0 {
             self.dial_dbase.borrow()
         } else{
             self.dbase.borrow()
@@ -331,19 +331,19 @@ impl pung_rpc::Server for PungRpc {
         //     println!("Server sending, in receiving phase...")
         // }
 
+        let req = pry!(params.get());
+        let id: u64 = req.get_id();
+        let round: u64 = req.get_round();
+
         let ret_promise;
         {
-            let ctx = if self.round % 5 == 0 {
+            let ctx = if round % 5 == 0 {
                 // println!("Dial CTX for round {}", self.round);
                 &mut self.dial_ctx
             } else {
                 // println!("Send CTX for round {}", self.round);
                 &mut self.send_ctx
             };
-
-            let req = pry!(params.get());
-            let id: u64 = req.get_id();
-            let round: u64 = req.get_round();
 
             // Ensure client is allowed to send.
             if !self.clients.contains_key(&id) {
@@ -470,9 +470,9 @@ impl pung_rpc::Server for PungRpc {
                     }
                 }
 
-                for (key, value) in &ctx.reqs {
-                    println!("Round {}, User {} -- {}: {}", self.round, id, key, value);
-                }
+                // for (key, value) in &ctx.reqs {
+                //     println!("Round {}, User {} -- {}: {}", self.round, id, key, value);
+                // }
             }
         
         
@@ -505,9 +505,10 @@ impl pung_rpc::Server for PungRpc {
         // for (key, value) in &self.ret_ctx.reqs {
         //     println!("Round {}, User {} -- {}: {}", self.round, id, key, value);
         // }
-        if self.round % 5 == 0 {
+
+        if round % 5 == 0 {
             // Check to see if all clients have sent all their tuples
-            println!("dial {}, {}, {}", !self.dial_ctx.reqs.values().any(|&x| x > 0), self.phase == Phase::Sending, self.dial_ctx.count >= self.min_messages);
+            println!("Round {} -- dial {}, {}, {}", round, !self.dial_ctx.reqs.values().any(|&x| x > 0), self.phase == Phase::Sending, self.dial_ctx.count >= self.min_messages);
                 if !self.dial_ctx.reqs.values().any(|&x| x > 0) && self.phase == Phase::Sending
                 && self.dial_ctx.count >= self.min_messages
             {
@@ -544,7 +545,7 @@ impl pung_rpc::Server for PungRpc {
             }
         } else{
             // Check to see if all clients have sent all their tuples
-                println!("send {}, {}, {}", !self.send_ctx.reqs.values().any(|&x| x > 0), self.phase == Phase::Sending, self.send_ctx.count >= self.min_messages);
+                println!("Round {} -- send {}, {}, {}", self.round, !self.send_ctx.reqs.values().any(|&x| x > 0), self.phase == Phase::Sending, self.send_ctx.count >= self.min_messages);
                 
                 if !self.send_ctx.reqs.values().any(|&x| x > 0) && self.phase == Phase::Sending
                 && self.send_ctx.count >= self.min_messages
@@ -581,7 +582,7 @@ impl pung_rpc::Server for PungRpc {
                 self.phase = Phase::Receiving;
             }
         };
-        println!("Returning promise...");
+        // println!("Returning promise...");
         ret_promise
     }
 
@@ -591,15 +592,15 @@ impl pung_rpc::Server for PungRpc {
         //     println!("Server retreiving, in receiving phase...")
         // }
 
-        let ctx = if self.round % 5 == 0 {
+        let req = pry!(params.get());
+        let id: u64 = req.get_id();
+        let round: u64 = req.get_round();
+
+        let ctx = if round % 5 == 0 {
             &mut self.dial_ctx
         } else{
             &mut self.send_ctx
         };
-
-        let req = pry!(params.get());
-        let id: u64 = req.get_id();
-        let round: u64 = req.get_round();
 
         if !self.clients.contains_key(&id) {
             return gj::Promise::err(Error::failed("Invalid id during send.".to_string()));
@@ -622,7 +623,7 @@ impl pung_rpc::Server for PungRpc {
         let q_num: u64 = req.get_qnum();
 
         // check to make sure level
-        let mut db = if self.round % 5 == 0 {
+        let mut db = if round % 5 == 0 {
             self.dial_dbase.borrow_mut()
         } else{
             self.dbase.borrow_mut()
