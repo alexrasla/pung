@@ -262,18 +262,23 @@ impl pung_rpc::Server for PungRpc {
         let mut collection_idx = 0;
 
         for bucket in db.get_buckets() {
+            println!("-----");
+            println!("buckets {} {}", bucket.len(), bucket.num_collections());
             for i in &label_collections {
+                println!("label collect {}", i);
                 let collection = bucket.get_collection(*i);
                 let mut label_list = collection_list
                     .borrow()
                     .init(collection_idx, collection.len() as u32);
 
                 for j in 0..collection.len() {
+                    println!("collection {}", j);
                     label_list.set(j as u32, collection.get_label(j));
                 }
 
                 collection_idx += 1;
             }
+            println!("-----");
         }
 
         gj::Promise::ok(())
@@ -508,7 +513,7 @@ impl pung_rpc::Server for PungRpc {
 
         if round % 5 == 0 {
             // Check to see if all clients have sent all their tuples
-            println!("Round {} -- dial {}, {}, {}", round, !self.dial_ctx.reqs.values().any(|&x| x > 0), self.phase == Phase::Sending, self.dial_ctx.count >= self.min_messages);
+            // println!("Round {} -- dial {}, {}, {}", round, !self.dial_ctx.reqs.values().any(|&x| x > 0), self.phase == Phase::Sending, self.dial_ctx.count >= self.min_messages);
                 if !self.dial_ctx.reqs.values().any(|&x| x > 0) && self.phase == Phase::Sending
                 && self.dial_ctx.count >= self.min_messages
             {
@@ -540,12 +545,12 @@ impl pung_rpc::Server for PungRpc {
                     *v = total_dbs * retries;
                 }
                 
-                println!("Changing to recieving phase...");
+                // println!("Changing to recieving phase...");
                 self.phase = Phase::Receiving;
             }
         } else{
             // Check to see if all clients have sent all their tuples
-                println!("Round {} -- send {}, {}, {}", self.round, !self.send_ctx.reqs.values().any(|&x| x > 0), self.phase == Phase::Sending, self.send_ctx.count >= self.min_messages);
+                // println!("Round {} -- send {}, {}, {}", self.round, !self.send_ctx.reqs.values().any(|&x| x > 0), self.phase == Phase::Sending, self.send_ctx.count >= self.min_messages);
                 
                 if !self.send_ctx.reqs.values().any(|&x| x > 0) && self.phase == Phase::Sending
                 && self.send_ctx.count >= self.min_messages
@@ -573,12 +578,14 @@ impl pung_rpc::Server for PungRpc {
                 let total_dbs = db.total_dbs() as u32;
                 let retries = self.max_retries(db.num_buckets());
 
+                // println!("server retires, {}", retries);
+
                 // Update the number of expected retrievals per client.
                 for v in self.ret_ctx.reqs.values_mut() {
                     *v = total_dbs * retries;
                 }
 
-                println!("Changing to recieving phase...");
+                // println!("Changing to recieving phase...");
                 self.phase = Phase::Receiving;
             }
         };

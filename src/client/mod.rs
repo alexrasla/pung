@@ -322,11 +322,11 @@ impl<'a> PungClient<'a> {
         }
     }
 
-    fn max_retries(&self) -> u32 {
+    fn max_retries(&self, buckets: u32) -> u32 {
         match self.opt_scheme {
-            db::OptScheme::Normal => retry_bound!(self.ret_rate),
-            db::OptScheme::Aliasing => retry_bound!(self.ret_rate, 2),
-            db::OptScheme::Hybrid2 => retry_bound!(self.ret_rate, 2) / 2,
+            db::OptScheme::Normal => retry_bound!(buckets),
+            db::OptScheme::Aliasing => retry_bound!(buckets, 2),
+            db::OptScheme::Hybrid2 => retry_bound!(buckets, 2) / 2,
             db::OptScheme::Hybrid4 => 1,
         }
     }
@@ -536,10 +536,9 @@ impl<'a> PungClient<'a> {
 
             // find out on which bucket this label falls
             let bucket_idx = util::bucket_idx(&label, &partitions);
-
             // Add (peer, label) to the bucket map. If there are collisions, append it to list
             // If there is aliasing, derive second label too
-
+            println!("{} {} {}", peer_name, count, bucket_idx);
             if self.opt_scheme >= db::OptScheme::Aliasing {
                 let mut collisions = 0; // Number of collisions found so far
                 let mut label_alias = pcrypto::gen_label(
@@ -666,27 +665,36 @@ impl<'a> PungClient<'a> {
 
         // index of collection(s) within a bucket containing meaningful labels
         let meaningful_labels: Vec<usize> = util::label_collections(self.opt_scheme);
-
+        println!("meaningful {}", meaningful_labels.len());
         let mut label_map: HashMap<usize, HashMap<usize, Vec<Vec<u8>>>> = HashMap::new();
 
         let mut download_measurement = 0;
-
+        
         for bucket_idx in 0..buckets.len() {
+            println!("------");
+            println!("bucket idx {}", bucket_idx);
             let bucket_map = label_map.entry(bucket_idx).or_insert_with(HashMap::new);
-
+            
             for collection_idx in &meaningful_labels {
+                println!("coll idx {}", collection_idx);
                 let collection_vec = bucket_map.entry(*collection_idx).or_insert_with(Vec::new);
-
+                
                 // This is the returned list(label) = list([u8])
                 let label_list = collection_list.get(response_idx)?;
 
                 for i in 0..label_list.len() {
+                    println!("label {}", i);
                     collection_vec.push(label_list.get(i).unwrap().to_vec());
                     download_measurement += db::LABEL_SIZE;
                 }
 
+                println!("collection_vec {}", collection_vec.len());
+
                 response_idx += 1;
+
             }
+
+            println!("------");
         }
 
         println!(
@@ -786,7 +794,14 @@ impl<'a> PungClient<'a> {
             &self.buckets
         };
 
-        let retries = self.max_retries();
+        let num_retries = if is_dial {
+            self.contact_size
+        } else {
+            self.ret_rate
+        };
+
+        let retries = self.max_retries(num_retries);
+        // println!("client retries, {}", retries);
         let dummy = &self.peers["dummy"];
         let mut dummy_count = 0;
         let mut rng = rand::ChaChaRng::new_unseeded();
@@ -811,8 +826,9 @@ impl<'a> PungClient<'a> {
                         assert_eq!(num, labels.len() as u64);
 
                         // Get index of label if available or random otherwise
+                        println!("retr normal, {} {} {}", labels.len(), retries, buckets.len());
                         let idx = some_or_random!(util::get_index(labels, &label), rng, num);
-
+                        
                         // Get a tuple using PIR to retrieve
                         let t = self.pir_retr(bucket, 0, 0, idx, num, scope, port)?;
 
@@ -914,7 +930,13 @@ impl<'a> PungClient<'a> {
             &self.buckets
         };
 
-        let retries = self.max_retries();
+        let num_retries = if is_dial {
+            self.contact_size
+        } else {
+            self.ret_rate
+        };
+
+        let retries = self.max_retries(num_retries);
         let dummy = &self.peers["dummy"];
         let mut dummy_count = 0;
         let mut rng = rand::ChaChaRng::new_unseeded();
@@ -1957,6 +1979,7 @@ impl<'a> PungClient<'a> {
     ) -> Result<Vec<Vec<u8>>, Error> {
 
         let partitions = if is_dial {
+            // println!("contact patitions");
             &self.contact_partitions
         } else {
             &self.partitions
