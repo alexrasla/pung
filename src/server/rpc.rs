@@ -400,7 +400,7 @@ impl pung_rpc::Server for PungRpc {
 
                     queue_list.push((id, tuple_list, fulfiller));
                 } else {
-                    
+                    println!("in send1");
                     if !ctx.reqs.contains_key(&id) {
                         return gj::Promise::err(Error::failed(
                             "Client is not synchronized.".to_string(),
@@ -442,6 +442,8 @@ impl pung_rpc::Server for PungRpc {
 
                     send_fulfillers.push(fulfiller);
                 }
+
+                println!("in send2");
 
                 
                 // Push any queued requests for the current round
@@ -494,6 +496,7 @@ impl pung_rpc::Server for PungRpc {
                 }
 
                 if opt_scheme >= db::OptScheme::Hybrid2 {
+                    
                     let mut lmid_list = res.get().init_min_labels(ret.1.len() as u32);
                     for i in 0..ret.1.len() {
                         lmid_list.set(i as u32, &(ret.1[i])[..]);

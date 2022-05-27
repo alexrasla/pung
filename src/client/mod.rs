@@ -387,6 +387,7 @@ impl<'a> PungClient<'a> {
 
                 // If we are using aliasing, generate an extra label
                 // and make sure it falls in a separate bucket
+                
                 if self.opt_scheme >= db::OptScheme::Aliasing {
                     let bucket_idx = util::bucket_idx(&tuple, &partitions);
 
@@ -401,8 +402,9 @@ impl<'a> PungClient<'a> {
                     let mut bucket_alias_idx = util::bucket_idx(&label_alias, &partitions);
 
                     let mut collision_count = 1; // count collisions of labels to the same bucket
-
+                    println!("client send");
                     while bucket_idx == bucket_alias_idx {
+                        println!("{} {} {}", bucket_idx, bucket_alias_idx, collision_count);
                         label_alias = pcrypto::gen_label(
                             &peer.keys.k_l2[..],
                             self.round,
@@ -410,6 +412,7 @@ impl<'a> PungClient<'a> {
                             idx as u64,
                             collision_count,
                         );
+
 
                         bucket_alias_idx = util::bucket_idx(&label_alias, &partitions);
                         collision_count += 1;
@@ -419,6 +422,8 @@ impl<'a> PungClient<'a> {
 
                     tuple.append(&mut label_alias);
                 }
+
+                
 
                 tuple.append(&mut c);
                 tuple.append(&mut mac);
@@ -801,11 +806,15 @@ impl<'a> PungClient<'a> {
         };
 
         let retries = self.max_retries(num_retries);
-        // println!("client retries, {}", retries);
         let dummy = &self.peers["dummy"];
+        // println!("dummy, {}", dummy);
         let mut dummy_count = 0;
         let mut rng = rand::ChaChaRng::new_unseeded();
         let mut messages: Vec<Vec<u8>> = Vec::new();
+
+        // for p in &self.peers {
+        //     println!("peers {}", p.0);
+        // }
 
         match self.ret_scheme {
             db::RetScheme::Explicit => {
@@ -825,13 +834,16 @@ impl<'a> PungClient<'a> {
                         let labels = &explicit_labels[&bucket][&0];
                         assert_eq!(num, labels.len() as u64);
 
+                        // if num == 0 {
+                        //     continue;
+                        // }
                         // Get index of label if available or random otherwise
-                        println!("retr normal, {} {} {}", labels.len(), retries, buckets.len());
+                        // println!("retr normal, {} {} {} {}", labels.len(), retries, buckets.len(), dummy_count);
                         let idx = some_or_random!(util::get_index(labels, &label), rng, num);
                         
                         // Get a tuple using PIR to retrieve
                         let t = self.pir_retr(bucket, 0, 0, idx, num, scope, port)?;
-
+                        println!("passed");
                         if t.label() == &label[..] {
                             // decrypt ciphertext using shared key and insert it into message list
                             let m = pcrypto::decrypt(
@@ -842,6 +854,7 @@ impl<'a> PungClient<'a> {
                             )?;
                             messages.push(m);
                         }
+                        println!("passed2");
                     }
                 }
             }
@@ -1781,6 +1794,7 @@ impl<'a> PungClient<'a> {
 
         // Create PIR request
         let query = self.pir_handler.gen_query(idx);
+        println!("passed gen");
         let mut request = self.conn.retr_request();
         request.get().set_id(self.id);
         request.get().set_round(self.round);
