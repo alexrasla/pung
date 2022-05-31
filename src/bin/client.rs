@@ -169,24 +169,24 @@ pub fn main() {
 
             // Register with the service
             let unique_id: u64 = (client.register(&wait_scope, &mut event_port))?;
-            println!("{} - Registered with Pung server", unique_id);
+            println!("Client {} registered with Pung server.", unique_id);
 
             // Changing the extra tuple value at the server (if requested).
             if extra > 0 {
                 client.extra(extra, &wait_scope, &mut event_port)?;
-                println!("{} - Changing the extra tuples value at Pung server to {}", unique_id, extra);
+                println!("Client {} is changing the extra tuples value at Pung server to {}...", unique_id, extra);
             }
 
             // Get current round number
-            println!("{} - Synchronizing with the Pung server", unique_id);
             client.sync(&wait_scope, &mut event_port)?;
+            println!("Client {} synchronized with the Pung server.", unique_id);
 
             //        std::thread::sleep(std::time::Duration::new(5, 0));
 
             let start_round = PreciseTime::now();
             for rnd in 0..rounds {
 
-                println!("--- ROUND {} ---", rnd);
+                println!("------------------");
 
                 //      println!("{} - Sending {} tuples for round {}", unique_id, send_rate, client.get_round());
             
@@ -197,14 +197,14 @@ pub fn main() {
                 let mut k = ret_rate;
 
                 if rnd % 5 == 0 {
-                    println!("{} - Dialing for round {}", unique_id, client.get_round());
+                    println!("[Round {}] Dialing...", client.get_round());
                     is_dial = true;
                     k = contact_size;
-                    let msg = format!("Hello").into_bytes();
+                    let msg = format!("Hello from {}", unique_id).into_bytes();
                     messages.push(msg);
                 } else {
                     for i in 0..send_rate {
-                        let msg = format!("Msg #{} from {}", i, unique_id).into_bytes();
+                        let msg = format!("Message #{} from User {}", i, unique_id).into_bytes();
                         messages.push(msg);
                     } 
                 }
@@ -218,11 +218,11 @@ pub fn main() {
                 let duration = start.to(end);
 
                 // TODO: Do we need to change this send_rate?
-                println!("{} - Sent ({} msgs): {:?} usec", unique_id, send_rate, duration.num_microseconds().unwrap());
+                println!("[Round {}] Sent     | {} msgs   | {:?} usec", client.get_round(), send_rate, duration.num_microseconds().unwrap());
 
 
                 // retrieve msg
-                println!("{} - Retrieving a message for round {}", unique_id, client.get_round());
+                println!("[Round {}] Retrieving Message...", client.get_round());
 
                 let start = PreciseTime::now();
 
@@ -239,12 +239,12 @@ pub fn main() {
                 let msgs = client.retr(&peers[..], &wait_scope, &mut event_port, is_dial)?;
 
                 let end = PreciseTime::now();
-                println!("{} - Retrieved ({} msgs): {:?} usec", unique_id,
+                println!("[Round {}] Retr     | {} msgs   | {:?} usec", client.get_round(),
                         msgs.len(),
                         start.to(end).num_microseconds().unwrap());
 
                 for msg in msgs {
-                    println!("{} - Retrieved msg is \"{}\"", unique_id, String::from_utf8(msg).unwrap());
+                    println!("[Round {}] Retr Message: \"{}\"", client.get_round(), String::from_utf8(msg).unwrap());
                 }
 
                 client.inc_round(1);

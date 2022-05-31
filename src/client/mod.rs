@@ -440,7 +440,9 @@ impl<'a> PungClient<'a> {
 
             // println!("tuple list {}", tuple_list)
 
-            println!("Upload (send rpc) {} bytes", measurement_byte_count + 16);
+            println!("[Round {}] Send RPC |   Upload | {} bytes",
+            self.round,
+            measurement_byte_count + 16);
         }
 
         // get RPC response which contains total number of tuples and lmids
@@ -448,7 +450,7 @@ impl<'a> PungClient<'a> {
         let mut total_tuples: u64 = 0;
 
         let res_ptr = send_request.send().promise.wait(scope, port)?;
-        println!("after promise");
+        // println!("after promise");
         let response = res_ptr.get()?;
 
         let buckets_num = response.get_num_messages()?;
@@ -470,7 +472,8 @@ impl<'a> PungClient<'a> {
             // This accounts for: 8 bytes (64 bits) for each bucket number entry
             // and the Lmid label
             println!(
-                "Download (send rpc) {} bytes",
+                "[Round {}] Send RPC | Download | {} bytes",
+                self.round,
                 (buckets_num.len() * 8) + (buckets_lmid.len() * db::LABEL_SIZE as u32)
             );
         } else if self.opt_scheme == db::OptScheme::Hybrid4 {
@@ -495,13 +498,14 @@ impl<'a> PungClient<'a> {
             // This accounts for: 8 bytes (64 bits) for each bucket number entry
             // and the 3 Lmid labels per bucket
             println!(
-                "Download (send rpc) {} bytes",
+                "[Round {}] Send RPC | Download | {} bytes",
+                self.round,
                 (buckets_num.len() * 8) + (buckets_lmid.len() * db::LABEL_SIZE as u32)
             );
         } else {
             
             for i in 0..buckets_num.len() {
-                println!("pushing to bucket {} {}", i, buckets_num.get(i));
+                // println!("pushing to bucket {} {}", i, buckets_num.get(i));
                 buckets.push(BucketInfo {
                     num: buckets_num.get(i),
                     lmid: Vec::new(),
@@ -511,7 +515,9 @@ impl<'a> PungClient<'a> {
             }
 
             // 8 bytes (64 bits) for each bucket number entry
-            println!("Download (send rpc) {} bytes", buckets_num.len() * 8);
+            println!("[Round {}] Send RPC | Download | {} bytes", 
+            self.round,
+            buckets_num.len() * 8);
         }
 
         Ok(total_tuples)
@@ -661,7 +667,9 @@ impl<'a> PungClient<'a> {
         map_request.get().set_round(self.round);
 
         // RPC is 8 bytes
-        println!("Upload (explicit label rpc) {} bytes", 8);
+        println!("[Round {}] EL RPC   |   Upload | {} bytes", 
+        self.round,
+        8);
 
         let response = map_request.send().promise.wait(scope, port)?;
 
@@ -710,7 +718,8 @@ impl<'a> PungClient<'a> {
         }
 
         println!(
-            "Download (explicit label rpc) {} bytes",
+            "[Round {}] EL RPC   | Download | {} bytes",
+            self.round,
             download_measurement
         );
 
@@ -823,7 +832,7 @@ impl<'a> PungClient<'a> {
                 // Get labels explicitly
                 let explicit_labels = self.get_explicit_labels(scope, port, is_dial)?;
 
-                println!("retires {}, bucket {}", retries, buckets.len());
+                // println!("retires {}, bucket {}", retries, buckets.len());
                 for _ in 0..retries {
                     for bucket in 0..buckets.len() {
                         
@@ -1808,7 +1817,9 @@ impl<'a> PungClient<'a> {
         request.get().set_query(query.query);
         request.get().set_qnum(query.num);
 
-        println!("Upload (pir) {} bytes", 32 + query.query.len());
+        println!("[Round {}] PIR      |   Upload | {} bytes", 
+        self.round,
+        32 + query.query.len());
 
         // Send request to the server and get response
         let response = request.send().promise.wait(scope, port)?;
@@ -1824,7 +1835,9 @@ impl<'a> PungClient<'a> {
         // Decode answer to get tuple
         let decoded = self.pir_handler.decode_answer(answer, a_num);
 
-        println!("Download (pir) {} bytes", 8 + answer.len());
+        println!("[Round {}] PIR      | Download | {} bytes", 
+        self.round,
+        8 + answer.len());
 
         Ok(db::PungTuple::new(decoded.result))
     }

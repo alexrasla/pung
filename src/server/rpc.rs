@@ -260,10 +260,10 @@ impl pung_rpc::Server for PungRpc {
         let mut collection_list = res.get()
             .init_labels((db.num_buckets() * label_collections.len()) as u32);
         let mut collection_idx = 0;
-        println!("-----");
+        // println!("-----");
         for bucket in db.get_buckets() {
             
-            println!("bucket length {}", bucket.len());
+            // println!("bucket length {}", bucket.len());
             for i in &label_collections {
                 // println!("label collect {}", i);
                 let collection = bucket.get_collection(*i);
@@ -280,7 +280,7 @@ impl pung_rpc::Server for PungRpc {
             }
            
         }
-        println!("-----");
+        // println!("-----");
 
         gj::Promise::ok(())
     }
@@ -551,7 +551,7 @@ impl pung_rpc::Server for PungRpc {
                     // println!("dial updated number of ret {}", *v);
                 }
                 
-                println!("dial retr ctx, {:?}", self.ret_ctx.reqs);
+                // println!("dial retr ctx, {:?}", self.ret_ctx.reqs);
                 self.phase = Phase::Receiving;
             } 
             // else{
@@ -599,7 +599,7 @@ impl pung_rpc::Server for PungRpc {
                     *v = total_dbs * retries;//total_dbs; // total_dbs * retries;
                 }
 
-                println!("send ret ctx {:?}", self.ret_ctx.reqs);
+                // println!("send ret ctx {:?}", self.ret_ctx.reqs);
 
                 // println!("Changing to recieving phase...");
                 self.phase = Phase::Receiving;
@@ -691,7 +691,7 @@ impl pung_rpc::Server for PungRpc {
         }
 
         // Check to see if we are done and we can move on to next round
-        println!("Before changing... {:?}", self.ret_ctx.reqs);
+        // println!("Before changing... {:?}", self.ret_ctx.reqs);
         if !self.ret_ctx.reqs.values().any(|&x| x > 0) {
             ctx.reqs = self.clients.clone();
             ctx.count = 0;
