@@ -260,26 +260,27 @@ impl pung_rpc::Server for PungRpc {
         let mut collection_list = res.get()
             .init_labels((db.num_buckets() * label_collections.len()) as u32);
         let mut collection_idx = 0;
-
+        println!("-----");
         for bucket in db.get_buckets() {
-            println!("-----");
-            println!("buckets {} {}", bucket.len(), bucket.num_collections());
+            
+            println!("bucket length {}", bucket.len());
             for i in &label_collections {
-                println!("label collect {}", i);
+                // println!("label collect {}", i);
                 let collection = bucket.get_collection(*i);
                 let mut label_list = collection_list
                     .borrow()
                     .init(collection_idx, collection.len() as u32);
 
                 for j in 0..collection.len() {
-                    println!("collection {}", j);
+                    // println!("collection {}", j);
                     label_list.set(j as u32, collection.get_label(j));
                 }
 
                 collection_idx += 1;
             }
-            println!("-----");
+           
         }
+        println!("-----");
 
         gj::Promise::ok(())
     }
@@ -329,12 +330,6 @@ impl pung_rpc::Server for PungRpc {
         // if self.phase == Phase::Sending{
         //     println!("Server sending, in sending phase...")
         // }
-        // if self.phase == Phase::Dialing{
-        //     println!("Server sending, in dialing phase...")
-        // }
-        // if self.phase == Phase::Receiving{
-        //     println!("Server sending, in receiving phase...")
-        // }
 
         let req = pry!(params.get());
         let id: u64 = req.get_id();
@@ -354,7 +349,7 @@ impl pung_rpc::Server for PungRpc {
             if !self.clients.contains_key(&id) {
                 return gj::Promise::err(Error::failed("Invalid id during send.".to_string()));
             } else if round < self.round {
-                return gj::Promise::err(Error::failed("Invalid round number.".to_string()));
+                return gj::Promise::err(Error::failed("send Invalid round number.".to_string()));
             } else if self.phase != Phase::Sending && round == self.round {
                 return gj::Promise::err(Error::failed("Not sending phase.".to_string()));
             }
@@ -400,7 +395,7 @@ impl pung_rpc::Server for PungRpc {
 
                     queue_list.push((id, tuple_list, fulfiller));
                 } else {
-                    println!("in send1");
+                    // println!("in send1");
                     if !ctx.reqs.contains_key(&id) {
                         return gj::Promise::err(Error::failed(
                             "Client is not synchronized.".to_string(),
@@ -443,7 +438,7 @@ impl pung_rpc::Server for PungRpc {
                     send_fulfillers.push(fulfiller);
                 }
 
-                println!("in send2");
+                // println!("in send2");
 
                 
                 // Push any queued requests for the current round
@@ -477,6 +472,8 @@ impl pung_rpc::Server for PungRpc {
                     }
                 }
 
+                // println!("in send3");
+
                 // for (key, value) in &ctx.reqs {
                 //     println!("Round {}, User {} -- {}: {}", self.round, id, key, value);
                 // }
@@ -493,6 +490,8 @@ impl pung_rpc::Server for PungRpc {
                     for i in 0..ret.0.len() {
                         num_list.set(i as u32, ret.0[i]);
                     }
+
+                    // println!("promise num list {:?}", num_list);
                 }
 
                 if opt_scheme >= db::OptScheme::Hybrid2 {
@@ -510,10 +509,6 @@ impl pung_rpc::Server for PungRpc {
         //    self.worker.step();
 
         // TODO: maybe add timeout? Right now it waits for all clients to send.
-        // for (key, value) in &self.ret_ctx.reqs {
-        //     println!("Round {}, User {} -- {}: {}", self.round, id, key, value);
-        // }
-
         if round % 5 == 0 {
             // Check to see if all clients have sent all their tuples
             // println!("Round {} -- dial {}, {}, {}", round, !self.dial_ctx.reqs.values().any(|&x| x > 0), self.phase == Phase::Sending, self.dial_ctx.count >= self.min_messages);
@@ -538,19 +533,30 @@ impl pung_rpc::Server for PungRpc {
                     self.worker.step();
                 }
 
-                let db = self.dial_dbase.borrow();
-                let total_dbs = db.total_dbs() as u32;
+                let db = self.dial_dbase.borrow(); // db.get_buckets().len() > 0
+
+                let mut total_dbs = 0;
+                for bucket in db.get_buckets(){
+                    if !bucket.is_empty(){
+                        total_dbs += 1;
+                    }
+                }
+                // let total_dbs = db.total_dbs() as u32;
                 let retries = self.max_retries(db.num_buckets());
 
 
                 // Update the number of expected retrievals per client.
                 for v in self.ret_ctx.reqs.values_mut() {
-                    *v = total_dbs * retries;
+                    *v = total_dbs * retries; //total_dbs
+                    // println!("dial updated number of ret {}", *v);
                 }
                 
-                // println!("Changing to recieving phase...");
+                println!("dial retr ctx, {:?}", self.ret_ctx.reqs);
                 self.phase = Phase::Receiving;
-            }
+            } 
+            // else{
+            //     println!("dial ctx {:?}", self.dial_ctx.reqs.values());
+            // }
         } else{
             // Check to see if all clients have sent all their tuples
                 // println!("Round {} -- send {}, {}, {}", self.round, !self.send_ctx.reqs.values().any(|&x| x > 0), self.phase == Phase::Sending, self.send_ctx.count >= self.min_messages);
@@ -576,17 +582,24 @@ impl pung_rpc::Server for PungRpc {
                     self.worker.step();
                 }
 
-               
                 let db = self.dbase.borrow();
-                let total_dbs = db.total_dbs() as u32;
+                // let total_dbs = db.total_dbs() as u32;
+                let mut total_dbs = 0;
+                for bucket in db.get_buckets(){
+                    if !bucket.is_empty(){
+                        total_dbs += 1;
+                    }
+                }
                 let retries = self.max_retries(db.num_buckets());
 
                 // println!("server retires, {}", retries);
 
                 // Update the number of expected retrievals per client.
                 for v in self.ret_ctx.reqs.values_mut() {
-                    *v = total_dbs * retries;
+                    *v = total_dbs * retries;//total_dbs; // total_dbs * retries;
                 }
+
+                println!("send ret ctx {:?}", self.ret_ctx.reqs);
 
                 // println!("Changing to recieving phase...");
                 self.phase = Phase::Receiving;
@@ -606,6 +619,8 @@ impl pung_rpc::Server for PungRpc {
         let id: u64 = req.get_id();
         let round: u64 = req.get_round();
 
+        // println!("retr round {} {}", round, self.round);
+
         let ctx = if round % 5 == 0 {
             &mut self.dial_ctx
         } else{
@@ -615,7 +630,7 @@ impl pung_rpc::Server for PungRpc {
         if !self.clients.contains_key(&id) {
             return gj::Promise::err(Error::failed("Invalid id during send.".to_string()));
         } else if round != self.round {
-            return gj::Promise::err(Error::failed("Invalid round number".to_string()));
+            return gj::Promise::err(Error::failed("send Invalid round number".to_string()));
         } else if self.phase != Phase::Receiving && self.phase != Phase::Dialing {
             return gj::Promise::err(Error::failed("Invalid phase for retrieval".to_string()));
         } else if !self.ret_ctx.reqs.contains_key(&id) {
@@ -676,19 +691,12 @@ impl pung_rpc::Server for PungRpc {
         }
 
         // Check to see if we are done and we can move on to next round
-        // println!("Before changing...");
+        println!("Before changing... {:?}", self.ret_ctx.reqs);
         if !self.ret_ctx.reqs.values().any(|&x| x > 0) {
             ctx.reqs = self.clients.clone();
             ctx.count = 0;
             self.round += 1;
 
-            // if self.round % 5 == 0 {
-            //     println!("Changing to dialing phase...");
-            //     self.phase = Phase::Dialing;
-            // } else{
-            //     println!("Changing to sending phase...");
-            //     self.phase = Phase::Sending; 
-            // }
             self.phase = Phase::Sending; 
             db.clear(); // Garbage collect the whole thing
 

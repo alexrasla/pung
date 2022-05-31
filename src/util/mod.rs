@@ -123,7 +123,7 @@ pub fn label_marker(index: usize, buckets: usize) -> Vec<u8> {
 #[inline]
 pub fn bucket_idx(label: &[u8], partitions: &[Vec<u8>]) -> usize {
     for (i, partition) in partitions.iter().enumerate() {
-        println!("i partitions {}", i);
+        // println!("i partitions {}", i);
         if label <= &partition[..] {
             return i;
         }
