@@ -538,9 +538,10 @@ impl pung_rpc::Server for PungRpc {
                 let mut total_dbs = 0;
                 for bucket in db.get_buckets(){
                     if !bucket.is_empty(){
-                        total_dbs += 1;
+                        total_dbs += (bucket.total_dbs() as u32);
                     }
                 }
+
                 // let total_dbs = db.total_dbs() as u32;
                 let retries = self.max_retries(db.num_buckets());
 
@@ -550,6 +551,7 @@ impl pung_rpc::Server for PungRpc {
                     *v = total_dbs * retries; //total_dbs
                     // println!("dial updated number of ret {}", *v);
                 }
+                // println!("updated to {}", total_dbs * retries);
                 
                 // println!("dial retr ctx, {:?}", self.ret_ctx.reqs);
                 self.phase = Phase::Receiving;
@@ -587,9 +589,10 @@ impl pung_rpc::Server for PungRpc {
                 let mut total_dbs = 0;
                 for bucket in db.get_buckets(){
                     if !bucket.is_empty(){
-                        total_dbs += 1;
+                        total_dbs += (bucket.total_dbs() as u32);
                     }
                 }
+            
                 let retries = self.max_retries(db.num_buckets());
 
                 // println!("server retires, {}", retries);
@@ -658,6 +661,8 @@ impl pung_rpc::Server for PungRpc {
             return gj::Promise::err(Error::failed("invalid bucket requested".to_string()));
         }
 
+        // println!("retr 1");
+
         // Process this bucket
         {
             let bucket = db.get_bucket(bucket_idx);
@@ -685,6 +690,8 @@ impl pung_rpc::Server for PungRpc {
             // bucket_idx, collection_idx, level_idx, start.to(end).num_microseconds().unwrap());
         }
 
+        // println!("retr 2");
+
         // Account for this retrieval
         if let Some(entry) = self.ret_ctx.reqs.get_mut(&id) {
             *entry -= 1;
@@ -702,6 +709,8 @@ impl pung_rpc::Server for PungRpc {
 
             println!("Advancing to round {}", self.round);
         }
+
+        // println!("retr 3");
 
         gj::Promise::ok(())
     }

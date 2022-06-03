@@ -88,7 +88,7 @@ pub fn graph(
               });
             })
             .probe();
-
+        
         (s_input, s_probe)
     });
 

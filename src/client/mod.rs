@@ -885,6 +885,10 @@ impl<'a> PungClient<'a> {
                         // Number of elements in bucket
                         let num = buckets[bucket].num_tuples();
 
+                        if num == 0 {
+                            continue;
+                        }
+
                         // Get bloom filter of collection 0 (entire bucket)
                         let bloom = &bloom_filters[&bucket][&0];
 
@@ -910,6 +914,8 @@ impl<'a> PungClient<'a> {
             }
 
             db::RetScheme::Tree => {
+                let mut tot_req = 0;
+                // println!("max req {} {}", retries,  buckets.len());
                 for _ in 0..retries {
                     for bucket in 0..buckets.len() {
                         // Get next label
@@ -918,6 +924,12 @@ impl<'a> PungClient<'a> {
 
                         // Number of elemnets in bucket
                         let num = buckets[bucket].num_tuples();
+                        // println!("num {}", num);
+                        if num == 0 {
+                            continue;
+                        }
+
+                        tot_req += 1;
 
                         // Perform bst retrieval
                         let result =
@@ -935,6 +947,8 @@ impl<'a> PungClient<'a> {
                         }
                     }
                 }
+
+                // println!("total req {}", tot_req);
             }
         }
 
@@ -1858,6 +1872,7 @@ impl<'a> PungClient<'a> {
         let mut len = 1; // first level has 1 entry
         let mut result: Option<db::PungTuple> = None;
 
+        // println!("tree height {} {}", num, tree_height);
         // Request level by level
         for h in 0..tree_height {
             let tuple = self.pir_retr(bucket, collection, h, idx, len, scope, port)?;
@@ -2025,6 +2040,8 @@ impl<'a> PungClient<'a> {
         if peer_names.len() as u32 > ret_rate {
             return Err(Error::failed("Number of peers exceeds rate".to_string()));
         }
+
+        // println!("retrieve 0");
 
         let bucket_map = self.schedule(peer_names, partitions)?;
 
