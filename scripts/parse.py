@@ -1,4 +1,4 @@
-import json
+import pandas as pd
 import os
 import argparse
 
@@ -32,15 +32,16 @@ avg_sent = sum(send_time) / len(send_time)
 print('Average Sent Time:', avg_sent)
 print('Average Retr Time:', avg_retr)
 
-new_data = {'avg_send_time': avg_sent, 
-            'avg_retr_time':avg_retr}
+new_data = {'test_type'    : [file_name],
+            'avg_send_time': [avg_sent], 
+            'avg_retr_time': [avg_retr]}
 
-if not os.path.exists('data.json'):
-    data = open('data.json', 'w')
-    file_data = dict()
+if not os.path.exists('data.csv'):
+    pd_frame = pd.DataFrame.from_dict(new_data)
+    pd_frame.to_csv('data.csv')
 else:
-    data = open('data.json', 'r+')
-    file_data = json.load(data)
+    data = pd.read_csv('data.csv')
+    # file_data = json.load(data)
 
-file_data[file_name] = new_data
-json.dump(file_data, data, indent = 4)
+# file_data[file_name] = new_data
+# json.dump(file_data, data, indent = 4)
