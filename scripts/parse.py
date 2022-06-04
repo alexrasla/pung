@@ -38,15 +38,19 @@ def parse_output(file_name):
                 'avg_send_time': [avg_sent], 
                 'avg_retr_time': [avg_retr]}
 
+    pd_frame = pd.DataFrame.from_dict(new_data)
     if not os.path.exists('data.csv'):
-        pd_frame = pd.DataFrame.from_dict(new_data)
         pd_frame.to_csv('data.csv')
+        # print(pd_frame)
     else:
-        data = pd.read_csv('data.csv')
-        # file_data = json.load(data)
+        curr_data = pd.read_csv('data.csv', index_col=[0])
+        # print('data', curr_data)
+        # print('pd frame', pd_frame)
+        new_data = curr_data.append(pd_frame)
+        print(new_data)
+        new_data.to_csv('data.csv')
         
-    # file_data[file_name] = new_data
-    # json.dump(file_data, data, indent = 4)
+        
 
 if __name__ == '__main__':
     parse_output(file_name)
