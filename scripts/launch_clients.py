@@ -22,6 +22,7 @@ import os
 import sys
 import time
 import argparse
+from parse import parse_output
 
 
 parser = argparse.ArgumentParser()
@@ -107,5 +108,4 @@ for i in num_messages:
 
     time.sleep(1)
 
-parse_command = "python3 ./scripts/parse.py -f " + out_file
-os.system(parse_command)
+parse_command = parse_output(out_file)#"python3 ./scripts/parse.py -f " + out_file
