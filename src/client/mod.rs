@@ -221,22 +221,6 @@ impl<'a> PungClient<'a> {
         self.round
     }
 
-    // pub fn get_partitions(&self) -> &Vec<Vec<u8>> {
-    //     &self.partitions
-    // }
-
-    // pub fn get_contact_partitions(&self) -> &Vec<Vec<u8>> {
-    //     &self.contact_partitions
-    // }
-
-    // pub fn get_buckets(&self) -> &Vec<BucketInfo> {
-    //     self.buckets
-    // }
-
-    // pub fn get_contact_buckets(&self) -> &Vec<BucketInfo> {
-    //     self.contact_buckets
-    // }
-
     pub fn inc_round(&mut self, val: u64) {
         self.round += val;
         self.buckets.clear();
@@ -338,11 +322,11 @@ impl<'a> PungClient<'a> {
         }
     }
 
-    fn max_retries(&self) -> u32 {
+    fn max_retries(&self, buckets: u32) -> u32 {
         match self.opt_scheme {
-            db::OptScheme::Normal => retry_bound!(self.ret_rate),
-            db::OptScheme::Aliasing => retry_bound!(self.ret_rate, 2),
-            db::OptScheme::Hybrid2 => retry_bound!(self.ret_rate, 2) / 2,
+            db::OptScheme::Normal => retry_bound!(buckets),
+            db::OptScheme::Aliasing => retry_bound!(buckets, 2),
+            db::OptScheme::Hybrid2 => retry_bound!(buckets, 2) / 2,
             db::OptScheme::Hybrid4 => 1,
         }
     }
@@ -402,7 +386,7 @@ impl<'a> PungClient<'a> {
                 );
 
                 // If we are using aliasing, generate an extra label
-                // and make sure it falls in a separate bucket
+                // and make sure it falls in a separate bucket           
                 if self.opt_scheme >= db::OptScheme::Aliasing {
                     let bucket_idx = util::bucket_idx(&tuple, &partitions);
 
@@ -417,7 +401,7 @@ impl<'a> PungClient<'a> {
                     let mut bucket_alias_idx = util::bucket_idx(&label_alias, &partitions);
 
                     let mut collision_count = 1; // count collisions of labels to the same bucket
-
+                    
                     while bucket_idx == bucket_alias_idx {
                         label_alias = pcrypto::gen_label(
                             &peer.keys.k_l2[..],
@@ -442,10 +426,12 @@ impl<'a> PungClient<'a> {
                 measurement_byte_count += tuple.len();
 
                 tuple_list.set(idx as u32, &tuple[..]);
-                idx += 1;
+                idx += 1;                
             }
 
-            println!("Upload (send rpc) {} bytes", measurement_byte_count + 16);
+            println!("[Round {}] Send RPC |   Upload | {} bytes",
+            self.round,
+            measurement_byte_count + 16);
         }
 
         // get RPC response which contains total number of tuples and lmids
@@ -474,7 +460,8 @@ impl<'a> PungClient<'a> {
             // This accounts for: 8 bytes (64 bits) for each bucket number entry
             // and the Lmid label
             println!(
-                "Download (send rpc) {} bytes",
+                "[Round {}] Send RPC | Download | {} bytes",
+                self.round,
                 (buckets_num.len() * 8) + (buckets_lmid.len() * db::LABEL_SIZE as u32)
             );
         } else if self.opt_scheme == db::OptScheme::Hybrid4 {
@@ -499,10 +486,11 @@ impl<'a> PungClient<'a> {
             // This accounts for: 8 bytes (64 bits) for each bucket number entry
             // and the 3 Lmid labels per bucket
             println!(
-                "Download (send rpc) {} bytes",
+                "[Round {}] Send RPC | Download | {} bytes",
+                self.round,
                 (buckets_num.len() * 8) + (buckets_lmid.len() * db::LABEL_SIZE as u32)
             );
-        } else {
+        } else {            
             for i in 0..buckets_num.len() {
                 buckets.push(BucketInfo {
                     num: buckets_num.get(i),
@@ -512,7 +500,9 @@ impl<'a> PungClient<'a> {
             }
 
             // 8 bytes (64 bits) for each bucket number entry
-            println!("Download (send rpc) {} bytes", buckets_num.len() * 8);
+            println!("[Round {}] Send RPC | Download | {} bytes", 
+            self.round,
+            buckets_num.len() * 8);
         }
 
         Ok(total_tuples)
@@ -663,7 +653,9 @@ impl<'a> PungClient<'a> {
         map_request.get().set_round(self.round);
 
         // RPC is 8 bytes
-        println!("Upload (explicit label rpc) {} bytes", 8);
+        println!("[Round {}] EL RPC   |   Upload | {} bytes", 
+        self.round,
+        8);
 
         let response = map_request.send().promise.wait(scope, port)?;
 
@@ -684,12 +676,12 @@ impl<'a> PungClient<'a> {
 
         let mut download_measurement = 0;
 
-        for bucket_idx in 0..buckets.len() {
+        for bucket_idx in 0..buckets.len() {            
             let bucket_map = label_map.entry(bucket_idx).or_insert_with(HashMap::new);
-
+            
             for collection_idx in &meaningful_labels {
                 let collection_vec = bucket_map.entry(*collection_idx).or_insert_with(Vec::new);
-
+                
                 // This is the returned list(label) = list([u8])
                 let label_list = collection_list.get(response_idx)?;
 
@@ -703,7 +695,8 @@ impl<'a> PungClient<'a> {
         }
 
         println!(
-            "Download (explicit label rpc) {} bytes",
+            "[Round {}] EL RPC   | Download | {} bytes",
+            self.round,
             download_measurement
         );
 
@@ -799,7 +792,13 @@ impl<'a> PungClient<'a> {
             &self.buckets
         };
 
-        let retries = self.max_retries();
+        let num_retries = if is_dial {
+            self.contact_size
+        } else {
+            self.ret_rate
+        };
+
+        let retries = self.max_retries(num_retries);
         let dummy = &self.peers["dummy"];
         let mut dummy_count = 0;
         let mut rng = rand::ChaChaRng::new_unseeded();
@@ -811,7 +810,7 @@ impl<'a> PungClient<'a> {
                 let explicit_labels = self.get_explicit_labels(scope, port, is_dial)?;
 
                 for _ in 0..retries {
-                    for bucket in 0..buckets.len() {
+                    for bucket in 0..buckets.len() {                        
                         // Get next label to retrieve
                         let (peer, label) =
                             self.next_label(&mut bucket_map, bucket, dummy, &mut dummy_count);
@@ -823,9 +822,12 @@ impl<'a> PungClient<'a> {
                         let labels = &explicit_labels[&bucket][&0];
                         assert_eq!(num, labels.len() as u64);
 
+                        if num == 0 {
+                            continue;
+                        }
                         // Get index of label if available or random otherwise
                         let idx = some_or_random!(util::get_index(labels, &label), rng, num);
-
+                        
                         // Get a tuple using PIR to retrieve
                         let t = self.pir_retr(bucket, 0, 0, idx, num, scope, port)?;
 
@@ -856,6 +858,10 @@ impl<'a> PungClient<'a> {
                         // Number of elements in bucket
                         let num = buckets[bucket].num_tuples();
 
+                        if num == 0 {
+                            continue;
+                        }
+
                         // Get bloom filter of collection 0 (entire bucket)
                         let bloom = &bloom_filters[&bucket][&0];
 
@@ -881,6 +887,7 @@ impl<'a> PungClient<'a> {
             }
 
             db::RetScheme::Tree => {
+                let mut tot_req = 0;
                 for _ in 0..retries {
                     for bucket in 0..buckets.len() {
                         // Get next label
@@ -889,6 +896,12 @@ impl<'a> PungClient<'a> {
 
                         // Number of elemnets in bucket
                         let num = buckets[bucket].num_tuples();
+
+                        if num == 0 {
+                            continue;
+                        }
+
+                        tot_req += 1;
 
                         // Perform bst retrieval
                         let result =
@@ -927,7 +940,13 @@ impl<'a> PungClient<'a> {
             &self.buckets
         };
 
-        let retries = self.max_retries();
+        let num_retries = if is_dial {
+            self.contact_size
+        } else {
+            self.ret_rate
+        };
+
+        let retries = self.max_retries(num_retries);
         let dummy = &self.peers["dummy"];
         let mut dummy_count = 0;
         let mut rng = rand::ChaChaRng::new_unseeded();
@@ -1781,7 +1800,9 @@ impl<'a> PungClient<'a> {
         request.get().set_query(query.query);
         request.get().set_qnum(query.num);
 
-        println!("Upload (pir) {} bytes", 32 + query.query.len());
+        println!("[Round {}] PIR      |   Upload | {} bytes", 
+        self.round,
+        32 + query.query.len());
 
         // Send request to the server and get response
         let response = request.send().promise.wait(scope, port)?;
@@ -1797,7 +1818,9 @@ impl<'a> PungClient<'a> {
         // Decode answer to get tuple
         let decoded = self.pir_handler.decode_answer(answer, a_num);
 
-        println!("Download (pir) {} bytes", 8 + answer.len());
+        println!("[Round {}] PIR      | Download | {} bytes", 
+        self.round,
+        8 + answer.len());
 
         Ok(db::PungTuple::new(decoded.result))
     }

@@ -29,7 +29,8 @@ use util;
 #[derive(PartialEq)]
 enum Phase {
     Sending,
-    Receiving
+    Receiving,
+    Dialing
 }
 
 struct SendCtx {
@@ -52,10 +53,11 @@ pub struct PungRpc {
 
     phase: Phase,
     send_ctx: SendCtx,
+    dial_ctx: SendCtx,
     ret_ctx: RetCtx,
 
     dbase: db::DatabasePtr,
-
+    dial_dbase: db::DatabasePtr,
     extra_tuples: Vec<db::PungTuple>, // blows up the collection size by extra_tuples.len()
 
     min_messages: u32, // hack to prevent server from advancing round until all clients have sent
@@ -67,7 +69,9 @@ impl PungRpc {
     pub fn new(
         worker: Root<Generic>,
         send: timely_shim::SendHandler,
+        dial: timely_shim::SendHandler,
         dbase: db::DatabasePtr,
+        dial_dbase: db::DatabasePtr,
         extra: usize,
         min_messages: u32,
         opt_scheme: db::OptScheme,
@@ -92,10 +96,17 @@ impl PungRpc {
                 handler: send,
                 count: 0,
             },
+            dial_ctx: SendCtx {
+                reqs: HashMap::new(), // gets updated every round
+                queue: HashMap::new(),
+                handler: dial,
+                count: 0,
+            },
             ret_ctx: RetCtx {
                 reqs: HashMap::new(),
             },
             dbase: dbase,
+            dial_dbase: dial_dbase,
             extra_tuples: extra_tuples,
             min_messages: min_messages,
             opt_scheme: opt_scheme,
@@ -151,9 +162,10 @@ impl pung_rpc::Server for PungRpc {
         if self.phase == Phase::Receiving {
             res.get().set_round(self.round + 1);
         } else {
+            self.dial_ctx.reqs.entry(id).or_insert(self.clients[&id]);
             self.send_ctx.reqs.entry(id).or_insert(self.clients[&id]);
             self.ret_ctx.reqs.entry(id).or_insert(0);
-            res.get().set_round(self.round);
+            res.get().set_round(self.round);      
         }
 
         gj::Promise::ok(())
@@ -161,6 +173,12 @@ impl pung_rpc::Server for PungRpc {
 
 
     fn close(&mut self, params: CloseParams, mut res: CloseResults) -> gj::Promise<(), Error> {
+        let ctx = if self.round % 5 == 0 {
+            &mut self.dial_ctx
+        } else{
+            &mut self.send_ctx
+        };
+
         let req = pry!(params.get());
         let id: u64 = req.get_id();
 
@@ -170,8 +188,8 @@ impl pung_rpc::Server for PungRpc {
 
         self.clients.remove(&id);
 
-        if self.send_ctx.reqs.contains_key(&id) {
-            self.send_ctx.reqs.remove(&id);
+        if ctx.reqs.contains_key(&id) {
+            ctx.reqs.remove(&id);
         }
 
         if self.ret_ctx.reqs.contains_key(&id) {
@@ -214,11 +232,26 @@ impl pung_rpc::Server for PungRpc {
 
         if round != self.round {
             return gj::Promise::err(Error::failed("Invalid round number".to_string()));
-        } else if self.phase != Phase::Receiving {
-            return gj::Promise::err(Error::failed("Not a receive phase".to_string()));
+        } else if self.phase != Phase::Receiving && self.phase != Phase::Dialing {
+            if self.phase == Phase::Sending{
+                println!("sending phase")
+            }
+            if self.phase == Phase::Dialing{
+                println!("dial phase")
+            }
+            if self.phase == Phase::Receiving{
+                println!("recieve phase")
+            }
+            
+            return gj::Promise::err(Error::failed("in get_mapping, not a receive phase".to_string()));
         }
-
-        let db = self.dbase.borrow();
+        
+        let db = if round % 5 == 0 {
+            self.dial_dbase.borrow()
+        } else{
+            self.dbase.borrow()
+        };
+        
         // Indices of collections that contain meaningful labels
         let label_collections: Vec<usize> = util::label_collections(self.opt_scheme);
 
@@ -238,7 +271,7 @@ impl pung_rpc::Server for PungRpc {
                 }
 
                 collection_idx += 1;
-            }
+            }           
         }
 
         gj::Promise::ok(())
@@ -253,11 +286,18 @@ impl pung_rpc::Server for PungRpc {
 
         if round != self.round {
             return gj::Promise::err(Error::failed("Invalid round number".to_string()));
-        } else if self.phase != Phase::Receiving {
-            return gj::Promise::err(Error::failed("Not a receive phase".to_string()));
+        } else if self.phase != Phase::Receiving && self.phase != Phase::Dialing{
+            if self.phase == Phase::Sending{
+                println!("sending phase")
+            }
+            return gj::Promise::err(Error::failed("In get_bloom, not a receive phase".to_string()));
         }
 
-        let db = self.dbase.borrow();
+        let db = if round % 5 == 0 {
+            self.dial_dbase.borrow()
+        } else{
+            self.dbase.borrow()
+        };
 
         // Indices of collections that contain meaningful labels
         let label_collections: Vec<usize> = util::label_collections(self.opt_scheme);
@@ -283,189 +323,243 @@ impl pung_rpc::Server for PungRpc {
         let id: u64 = req.get_id();
         let round: u64 = req.get_round();
 
-        // Ensure client is allowed to send.
-        if !self.clients.contains_key(&id) {
-            return gj::Promise::err(Error::failed("Invalid id during send.".to_string()));
-        } else if round < self.round {
-            return gj::Promise::err(Error::failed("Invalid round number.".to_string()));
-        } else if self.phase != Phase::Sending && round == self.round {
-            return gj::Promise::err(Error::failed("Not sending phase.".to_string()));
-        }
-
-
-        // Create fulfillers so that when we have all info we can respond to clients
-        let (promise, fulfiller) = gj::Promise::and_fulfiller();
-
+        let ret_promise;
         {
-            // Get tuples
-            if !req.has_tuples() {
-                return gj::Promise::err(Error::failed("Number of tuples sent is 0".to_string()));
-            }
-
-            let tuple_data_list = pry!(req.get_tuples());
-
-            let send_fulfillers = &mut self.send_ctx.handler.fulfillers.borrow_mut();
-
-            if round > self.round {
-                // Queue request if round > self.round
-                let queue_list = &mut self.send_ctx.queue.entry(round).or_insert_with(Vec::new);
-
-                let mut tuple_list: Vec<db::PungTuple> =
-                    Vec::with_capacity(tuple_data_list.len() as usize);
-
-                for i in 0..tuple_data_list.len() {
-                    let tuple_data = pry!(tuple_data_list.get(i));
-                    let mut offset: usize = 0;
-
-                    // If power of two, clone the tuple under the two provided labels
-                    // The format of the message is: (label1, label2, cipher, mac)
-                    if self.opt_scheme >= db::OptScheme::Aliasing {
-                        offset = db::LABEL_SIZE;
-                        let mut tuple_alias_data = Vec::with_capacity(db::TUPLE_SIZE);
-                        tuple_alias_data.extend_from_slice(&tuple_data[..offset]);
-                        tuple_alias_data.extend_from_slice(&tuple_data[offset * 2..]);
-
-                        tuple_list.push(db::PungTuple::new(&tuple_alias_data[..]));
-                    }
-
-                    tuple_list.push(db::PungTuple::new(&tuple_data[offset..]));
-                }
-
-                queue_list.push((id, tuple_list, fulfiller));
+            let ctx = if round % 5 == 0 {
+                &mut self.dial_ctx
             } else {
-                if !self.send_ctx.reqs.contains_key(&id) {
-                    return gj::Promise::err(Error::failed(
-                        "Client is not synchronized.".to_string(),
-                    ));
-                } else if self.send_ctx.reqs[&id] < tuple_data_list.len() {
-                    return gj::Promise::err(Error::failed("Send rate exceeded.".to_string()));
-                }
+                &mut self.send_ctx
+            };
 
-                if let Some(entry) = self.send_ctx.reqs.get_mut(&id) {
-                    *entry -= tuple_data_list.len() as u32;
-                }
-
-                for i in 0..tuple_data_list.len() {
-                    let tuple_data = pry!(tuple_data_list.get(i));
-                    let mut offset: usize = 0;
-
-                    // If power of two, clone the tuple under the two provided labels
-                    if self.opt_scheme >= db::OptScheme::Aliasing {
-                        offset = db::LABEL_SIZE;
-                        let mut tuple_alias_data = Vec::with_capacity(db::TUPLE_SIZE);
-                        tuple_alias_data.extend_from_slice(&tuple_data[..offset]);
-                        tuple_alias_data.extend_from_slice(&tuple_data[offset * 2..]);
-
-                        let tuple_alias = db::PungTuple::new(&tuple_alias_data[..]);
-
-                        self.send_ctx.count += 1;
-                        self.send_ctx.handler.input.send(tuple_alias);
-                    }
-
-                    let tuple = db::PungTuple::new(&tuple_data[offset..]);
-
-                    self.send_ctx.count += 1;
-                    self.send_ctx.handler.input.send(tuple);
-                }
-
-                send_fulfillers.push(fulfiller);
+            // Ensure client is allowed to send.
+            if !self.clients.contains_key(&id) {
+                return gj::Promise::err(Error::failed("Invalid id during send.".to_string()));
+            } else if round < self.round {
+                return gj::Promise::err(Error::failed("Invalid round number during send.".to_string()));
+            } else if self.phase != Phase::Sending && round == self.round {
+                return gj::Promise::err(Error::failed("Not sending phase.".to_string()));
             }
 
+        
+            // Create fulfillers so that when we have all info we can respond to clients
+            let (promise, fulfiller) = gj::Promise::and_fulfiller();
 
-            // Push any queued requests for the current round
-            if let Some(mut queued) = self.send_ctx.queue.remove(&self.round) {
-                for (cid, mut tuple_list, f) in queued.drain(..) {
-                    let alias = if self.opt_scheme >= db::OptScheme::Aliasing {
-                        2
-                    } else {
-                        1
-                    };
-
-                    // Check if queued request is valid, if not, reject it
-                    if !self.send_ctx.reqs.contains_key(&cid) {
-                        f.reject(Error::failed("Client is not synchronized.".to_string()));
-                    } else if self.send_ctx.reqs[&cid] * alias < tuple_list.len() as u32 {
-                        f.reject(Error::failed("Send rate exceeded (queue).".to_string()));
-                    } else {
-                        // if valid, process it as if it had been sent this round
-
-                        if let Some(entry) = self.send_ctx.reqs.get_mut(&cid) {
-                            *entry -= tuple_list.len() as u32 / alias;
-                        }
-
-                        for t in tuple_list.drain(..) {
-                            self.send_ctx.count += 1;
-                            self.send_ctx.handler.input.send(t);
-                        }
-
-                        send_fulfillers.push(f);
-                    }
-                }
-            }
-        }
-
-        let opt_scheme = self.opt_scheme;
-
-        // promise returned to the client (when we have all tuples we can return this info)
-        let ret_promise = promise.then(move |ret: Rc<(Vec<u64>, Vec<Vec<u8>>)>| {
             {
-                let mut num_list = res.get().init_num_messages(ret.0.len() as u32);
+                // Get tuples
+                if !req.has_tuples() {
+                    return gj::Promise::err(Error::failed("Number of tuples sent is 0".to_string()));
+                }
 
-                for i in 0..ret.0.len() {
-                    num_list.set(i as u32, ret.0[i]);
+                let tuple_data_list = pry!(req.get_tuples());
+
+                let send_fulfillers = &mut ctx.handler.fulfillers.borrow_mut();
+
+                if round > self.round {
+                    // Queue request if round > self.round
+                    let queue_list = &mut ctx.queue.entry(round).or_insert_with(Vec::new);
+
+                    let mut tuple_list: Vec<db::PungTuple> =
+                        Vec::with_capacity(tuple_data_list.len() as usize);
+
+                    for i in 0..tuple_data_list.len() {
+                        let tuple_data = pry!(tuple_data_list.get(i));
+                        let mut offset: usize = 0;
+
+                        // If power of two, clone the tuple under the two provided labels
+                        // The format of the message is: (label1, label2, cipher, mac)
+                        if self.opt_scheme >= db::OptScheme::Aliasing {
+                            offset = db::LABEL_SIZE;
+                            let mut tuple_alias_data = Vec::with_capacity(db::TUPLE_SIZE);
+                            tuple_alias_data.extend_from_slice(&tuple_data[..offset]);
+                            tuple_alias_data.extend_from_slice(&tuple_data[offset * 2..]);
+
+                            tuple_list.push(db::PungTuple::new(&tuple_alias_data[..]));
+                        }
+
+                        tuple_list.push(db::PungTuple::new(&tuple_data[offset..]));
+                    }
+
+                    queue_list.push((id, tuple_list, fulfiller));
+                } else {
+                    if !ctx.reqs.contains_key(&id) {
+                        return gj::Promise::err(Error::failed(
+                            "Client is not synchronized.".to_string(),
+                        ));
+                    } else if ctx.reqs[&id] < tuple_data_list.len() {
+                        return gj::Promise::err(Error::failed("Send rate exceeded.".to_string()));
+                    }
+                    
+                    if let Some(entry) = ctx.reqs.get_mut(&id) {
+                        *entry -= tuple_data_list.len() as u32;
+                    }
+
+                    for i in 0..tuple_data_list.len() {                        
+                        let tuple_data = pry!(tuple_data_list.get(i));
+                        let mut offset: usize = 0;
+
+                        // If power of two, clone the tuple under the two provided labels
+                        if self.opt_scheme >= db::OptScheme::Aliasing {
+                            offset = db::LABEL_SIZE;
+                            let mut tuple_alias_data = Vec::with_capacity(db::TUPLE_SIZE);
+                            tuple_alias_data.extend_from_slice(&tuple_data[..offset]);
+                            tuple_alias_data.extend_from_slice(&tuple_data[offset * 2..]);
+
+                            let tuple_alias = db::PungTuple::new(&tuple_alias_data[..]);
+
+                            ctx.count += 1;
+                            ctx.handler.input.send(tuple_alias);
+                        }
+                       
+                        let tuple = db::PungTuple::new(&tuple_data[offset..]);
+
+                        ctx.count += 1;
+                        ctx.handler.input.send(tuple);
+                    }
+
+                    send_fulfillers.push(fulfiller);
+                }
+
+                
+                // Push any queued requests for the current round
+                if let Some(mut queued) = ctx.queue.remove(&self.round) {
+                    for (cid, mut tuple_list, f) in queued.drain(..) {
+                        let alias = if self.opt_scheme >= db::OptScheme::Aliasing {
+                            2
+                        } else {
+                            1
+                        };
+
+                        // Check if queued request is valid, if not, reject it
+                        if !ctx.reqs.contains_key(&cid) {
+                            f.reject(Error::failed("Client is not synchronized.".to_string()));
+                        } else if ctx.reqs[&cid] * alias < tuple_list.len() as u32 {
+                            f.reject(Error::failed("Send rate exceeded (queue).".to_string()));
+                        } else {
+                            // if valid, process it as if it had been sent this round
+
+                            if let Some(entry) = ctx.reqs.get_mut(&cid) {
+                                *entry -= tuple_list.len() as u32 / alias;
+                            }
+
+                            for t in tuple_list.drain(..) {
+                                ctx.count += 1;
+                                ctx.handler.input.send(t);
+                            }
+
+                            send_fulfillers.push(f);
+                        }
+                    }
                 }
             }
+        
+            let opt_scheme = self.opt_scheme;
+        
+            // promise returned to the client (when we have all tuples we can return this info)
+            ret_promise = promise.then(move |ret: Rc<(Vec<u64>, Vec<Vec<u8>>)>| {
+                {
+                    let mut num_list = res.get().init_num_messages(ret.0.len() as u32);
 
-            if opt_scheme >= db::OptScheme::Hybrid2 {
-                let mut lmid_list = res.get().init_min_labels(ret.1.len() as u32);
-                for i in 0..ret.1.len() {
-                    lmid_list.set(i as u32, &(ret.1[i])[..]);
+                    for i in 0..ret.0.len() {
+                        num_list.set(i as u32, ret.0[i]);
+                    }
                 }
-            }
 
-            gj::Promise::ok(())
-        });
+                if opt_scheme >= db::OptScheme::Hybrid2 {
+                    let mut lmid_list = res.get().init_min_labels(ret.1.len() as u32);
+                    for i in 0..ret.1.len() {
+                        lmid_list.set(i as u32, &(ret.1[i])[..]);
+                    }
+                }
 
+                gj::Promise::ok(())
+            });
+        }
         // TODO: not sure if this has any effect...
         //    self.worker.step();
 
         // TODO: maybe add timeout? Right now it waits for all clients to send.
-
-        // Check to see if all clients have sent all their tuples
-        if !self.send_ctx.reqs.values().any(|&x| x > 0) && self.phase == Phase::Sending
-            && self.send_ctx.count >= self.min_messages
-        {
-            for t in &self.extra_tuples {
-                self.send_ctx.handler.input.send(t.clone());
-            }
-
-            self.send_ctx
-                .handler
-                .input
-                .advance_to(self.round as usize + 1);
-
-            while self.send_ctx
-                .handler
-                .probe
-                .less_equal(&RootTimestamp::new(self.round as usize))
+        if round % 5 == 0 {
+            // Check to see if all clients have sent all their tuples
+                if !self.dial_ctx.reqs.values().any(|&x| x > 0) && self.phase == Phase::Sending
+                && self.dial_ctx.count >= self.min_messages
             {
-                self.worker.step();
+
+                for t in &self.extra_tuples {
+                    self.dial_ctx.handler.input.send(t.clone());
+                }
+
+                self.dial_ctx
+                    .handler
+                    .input
+                    .advance_to(self.round as usize + 1);
+
+                while self.dial_ctx
+                    .handler
+                    .probe
+                    .less_equal(&RootTimestamp::new(self.round as usize))
+                {
+                    self.worker.step();
+                }
+
+                let db = self.dial_dbase.borrow();
+
+                let mut total_dbs = 0;
+                for bucket in db.get_buckets(){
+                    if !bucket.is_empty(){
+                        total_dbs += (bucket.total_dbs() as u32);
+                    }
+                }
+
+                let retries = self.max_retries(db.num_buckets());
+
+
+                // Update the number of expected retrievals per client.
+                for v in self.ret_ctx.reqs.values_mut() {
+                    *v = total_dbs * retries; //total_dbs
+                }
+                
+                self.phase = Phase::Receiving;
+            } 
+        } else{
+            // Check to see if all clients have sent all their tuples
+                if !self.send_ctx.reqs.values().any(|&x| x > 0) && self.phase == Phase::Sending
+                && self.send_ctx.count >= self.min_messages
+            {
+                for t in &self.extra_tuples {
+                    self.send_ctx.handler.input.send(t.clone());
+                }
+
+                self.send_ctx
+                    .handler
+                    .input
+                    .advance_to(self.round as usize + 1);
+
+                while self.send_ctx
+                    .handler
+                    .probe
+                    .less_equal(&RootTimestamp::new(self.round as usize))
+                {
+                    self.worker.step();
+                }
+
+                let db = self.dbase.borrow();
+                let mut total_dbs = 0;
+                for bucket in db.get_buckets(){
+                    if !bucket.is_empty(){
+                        total_dbs += (bucket.total_dbs() as u32);
+                    }
+                }
+            
+                let retries = self.max_retries(db.num_buckets());
+
+                // Update the number of expected retrievals per client.
+                for v in self.ret_ctx.reqs.values_mut() {
+                    *v = total_dbs * retries;
+                }
+
+                self.phase = Phase::Receiving;
             }
-
-
-            let db = self.dbase.borrow();
-
-            let total_dbs = db.total_dbs() as u32;
-            let retries = self.max_retries(db.num_buckets());
-
-            // Update the number of expected retrievals per client.
-            for v in self.ret_ctx.reqs.values_mut() {
-                *v = total_dbs * retries;
-            }
-
-            self.phase = Phase::Receiving;
-        }
-
+        };
         ret_promise
     }
 
@@ -475,11 +569,17 @@ impl pung_rpc::Server for PungRpc {
         let id: u64 = req.get_id();
         let round: u64 = req.get_round();
 
+        let ctx = if round % 5 == 0 {
+            &mut self.dial_ctx
+        } else{
+            &mut self.send_ctx
+        };
+
         if !self.clients.contains_key(&id) {
-            return gj::Promise::err(Error::failed("Invalid id during send.".to_string()));
+            return gj::Promise::err(Error::failed("Invalid id during retrieve.".to_string()));
         } else if round != self.round {
-            return gj::Promise::err(Error::failed("Invalid round number".to_string()));
-        } else if self.phase != Phase::Receiving {
+            return gj::Promise::err(Error::failed("Invalid round number during retrieve".to_string()));
+        } else if self.phase != Phase::Receiving && self.phase != Phase::Dialing {
             return gj::Promise::err(Error::failed("Invalid phase for retrieval".to_string()));
         } else if !self.ret_ctx.reqs.contains_key(&id) {
             return gj::Promise::err(Error::failed(
@@ -496,7 +596,11 @@ impl pung_rpc::Server for PungRpc {
         let q_num: u64 = req.get_qnum();
 
         // check to make sure level
-        let mut db = self.dbase.borrow_mut();
+        let mut db = if round % 5 == 0 {
+            self.dial_dbase.borrow_mut()
+        } else{
+            self.dbase.borrow_mut()
+        };
 
         if bucket_idx >= db.num_buckets() {
             return gj::Promise::err(Error::failed("invalid bucket requested".to_string()));
@@ -536,10 +640,10 @@ impl pung_rpc::Server for PungRpc {
 
         // Check to see if we are done and we can move on to next round
         if !self.ret_ctx.reqs.values().any(|&x| x > 0) {
-            self.send_ctx.reqs = self.clients.clone();
-            self.send_ctx.count = 0;
+            ctx.reqs = self.clients.clone();
+            ctx.count = 0;
             self.round += 1;
-            self.phase = Phase::Sending;
+            self.phase = Phase::Sending; 
             db.clear(); // Garbage collect the whole thing
 
             println!("Advancing to round {}", self.round);

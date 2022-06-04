@@ -189,6 +189,7 @@ impl<'a> Bucket<'a> {
 
         // Default is 1 collection
         b.collections.push(Collection::new(ret_scheme, depth));
+        //ONLY ADDS ONE COLLECTION
 
         // Hybrid 2 adds 2 more collections, Hybrid 4 adds 8 more
         if opt_scheme == OptScheme::Hybrid2 {

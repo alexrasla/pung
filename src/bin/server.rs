@@ -48,6 +48,7 @@ fn main() {
     opts.optopt("i", "ip", "address of pung RPC", "IP");
     opts.optopt("s", "port", "initial port of pung RPC", "PORT");
     opts.optopt("k", "buckets", "number of buckets", "BUCKETS");
+    opts.optopt("c", "contact-size", "contact size", "RATE");
     //    opts.optopt("a", "alpha", "PIR aggregation", "ALPHA");
     opts.optopt("d", "depth", "PIR depth", "DEPTH");
     opts.optopt("b", "extra", "extra tuples added", "EXTRA");
@@ -91,6 +92,11 @@ fn main() {
     };
 
     let buckets: usize = match matches.opt_str("k") {
+        Some(v) => usize::from_str_radix(&v, 10).unwrap(),
+        None => 1,
+    };
+
+    let contact_buckets: usize = match matches.opt_str("c") {
         Some(v) => usize::from_str_radix(&v, 10).unwrap(),
         None => 1,
     };
@@ -147,10 +153,10 @@ fn main() {
 
             let index = worker.index();
             let dbase = Rc::new(RefCell::new(db::Database::new(ret_scheme, opt_scheme, buckets, depth)));
-            let dial_dbase = Rc::new(RefCell::new(db::Database::new(ret_scheme, opt_scheme, buckets, depth)));
+            let dial_dbase = Rc::new(RefCell::new(db::Database::new(ret_scheme, opt_scheme, contact_buckets, depth)));
 
             let send_handle = send_dataflow::graph(&mut worker, dbase.clone(), buckets);
-            let dial_handle = send_dataflow::graph(&mut worker, dial_dbase.clone(), buckets);
+            let dial_handle = send_dataflow::graph(&mut worker, dial_dbase.clone(), contact_buckets);
 
             let worker_port = port + index; // port of this worker
             let addr = FromStr::from_str(&format!("{}:{}", &rpc_addr, worker_port)).unwrap();
@@ -159,7 +165,9 @@ fn main() {
             pung::server::run_rpc(addr,
                                   worker.clone(),
                                   send_handle,
+                                  dial_handle,
                                   dbase,
+                                  dial_dbase,
                                   extra_tuples,
                                   min_messages,
                                   opt_scheme);

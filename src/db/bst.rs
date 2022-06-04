@@ -9,6 +9,9 @@ impl<T: Clone> BSTOrder for Vec<T> {
     // Takes a sorted array of elements and produces an array that corresponds
     // to the compact representation (no pointers) of a complete Binary search tree.
     fn as_bst_order(&mut self) {
+        if self.len() == 0 {
+            return;
+        }
         let mut q = VecDeque::new();
         let mut copy: Vec<T> = Vec::with_capacity(self.len());
 
@@ -17,10 +20,14 @@ impl<T: Clone> BSTOrder for Vec<T> {
         while !q.is_empty() {
             let (start, end) = q.pop_front().unwrap();
             let len = (end - start) + 1;
+            if len <= 0 {
+                continue;
+            }
+
             let idx = start + find_idx(len as u32) as usize;
 
             copy.push(self[idx].clone());
-
+            
             if idx > start {
                 q.push_back((start, idx - 1));
             }
