@@ -16,18 +16,16 @@ impl<T: Clone> BSTOrder for Vec<T> {
         let mut copy: Vec<T> = Vec::with_capacity(self.len());
 
         q.push_back((0 as usize, self.len() - 1));
-        // println!("as bst order {:?} {}", q, self.len());
+
         while !q.is_empty() {
-            // println!("as bst order3");
             let (start, end) = q.pop_front().unwrap();
             let len = (end - start) + 1;
-            // println!("len {}", len);
             if len <= 0 {
                 continue;
             }
 
             let idx = start + find_idx(len as u32) as usize;
-            // println!("as bst order4 {} {}", len, idx);
+
             copy.push(self[idx].clone());
             
             if idx > start {
@@ -38,7 +36,7 @@ impl<T: Clone> BSTOrder for Vec<T> {
                 q.push_back((idx + 1, end));
             }
         }
-        // println!("as bst order5");
+
         *self = copy;
     }
 }

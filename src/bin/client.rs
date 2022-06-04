@@ -153,19 +153,7 @@ pub fn main() {
                                              &mut event_port);
 
             client.init_dummy_peer();
-            
-            // loop {
-                // let mut peer_name = String::new();
-                // print!("Please enter a user to add (or q when done): ");
-                
-                // // let _ = std::io::stdout().flush();
-                // std::io::stdin().read_line(&mut peer_name).expect("Did not enter a correct string");
-                
-                // if peer == "q" { break; }
-                client.add_peer(&peer_name, &secret);
-            // }
-
-
+            client.add_peer(&peer_name, &secret);
 
             // Register with the service
             let unique_id: u64 = (client.register(&wait_scope, &mut event_port))?;
@@ -228,13 +216,10 @@ pub fn main() {
 
                 // create a ret request
                 let mut peers: Vec<&str> = vec![];
-                // println!("k {} {} {}", ret_rate, contact_size, k);
+
                 for _ in 0..k {
-                    // println!("{}", peer_name);
                     peers.push(&peer_name);
                 }
-
-                
 
                 let msgs = client.retr(&peers[..], &wait_scope, &mut event_port, is_dial)?;
 
