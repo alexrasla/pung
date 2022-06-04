@@ -29,6 +29,7 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument('-s', dest='total_servers', default=1, help='total servers', type=int)
 parser.add_argument('-c', dest='total_clients', default=1, help='total clients', type=int)
+parser.add_argument('-v', dest='contact', default=1, help='contact rate', type=int)
 parser.add_argument('--svm', dest='num_server_vms', default=1, help='number of server VMs', type=int)
 parser.add_argument('--cvm', dest='num_client_vms', default=1, help='number of client VMs', type=int)
 parser.add_argument('-i', dest='id', default=0, help='id of server', type=int)
@@ -63,6 +64,7 @@ vm_id = results.id
 server_ip = results.ip
 
 rate = results.rate
+contact_rate = results.contact
 
 rounds = results.rounds
 pir_d = results.d
@@ -108,4 +110,4 @@ for i in num_messages:
 
     time.sleep(1)
 
-parse_command = parse_output(out_file)#"python3 ./scripts/parse.py -f " + out_file
+parse_command = parse_output(out_file, num_messages[0], total_clients, total_servers, rate, contact_rate)

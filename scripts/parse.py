@@ -2,15 +2,7 @@ import pandas as pd
 import os
 import argparse
 
-
-parser = argparse.ArgumentParser()
-parser.add_argument('-f', dest='file', default='', help='file name', type=str)
-
-results = parser.parse_args()
-
-file_name = results.file
-
-def parse_output(file_name):
+def parse_output(file_name, num_messages, total_clients, total_servers, rate, contact_rate):
     
     send_time = []
     retr_time = []
@@ -34,23 +26,28 @@ def parse_output(file_name):
     print('Average Sent Time:', avg_sent)
     print('Average Retr Time:', avg_retr)
 
-    new_data = {'test_type'    : [file_name],
+    new_data = {'num_messages' : [num_messages],
+                'total_clients': [total_clients],
+                'total_servers': [total_servers], 
+                'message_rate' : [rate], 
+                'contact_rate' : [contact_rate],
                 'avg_send_time': [avg_sent], 
                 'avg_retr_time': [avg_retr]}
 
     pd_frame = pd.DataFrame.from_dict(new_data)
     if not os.path.exists('data.csv'):
-        pd_frame.to_csv('data.csv')
-        # print(pd_frame)
+        pd_frame.to_csv('data.csv', index=False)
     else:
         curr_data = pd.read_csv('data.csv', index_col=[0])
-        # print('data', curr_data)
-        # print('pd frame', pd_frame)
         new_data = curr_data.append(pd_frame)
-        print(new_data)
         new_data.to_csv('data.csv')
         
-        
-
 if __name__ == '__main__':
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-f', dest='file', default='', help='file name', type=str)
+
+    results = parser.parse_args()
+
+    file_name = results.file
     parse_output(file_name)

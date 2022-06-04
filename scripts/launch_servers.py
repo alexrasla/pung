@@ -24,6 +24,7 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument('-s', dest='total_servers', default=1, help='total servers', type=int)
 parser.add_argument('-c', dest='total_clients', default=1, help='total clients', type=int)
+parser.add_argument('-v', dest='contact', default=1, help='contact rate', type=int)
 parser.add_argument('--svm', dest='num_server_vms', default=1, help='number of server VMs', type=int)
 parser.add_argument('--cvm', dest='num_client_vms', default=1, help='number of client VMs', type=int)
 parser.add_argument('-i', dest='id', default=0, help='id of server', type=int)
