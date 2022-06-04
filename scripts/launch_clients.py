@@ -88,6 +88,8 @@ for i in num_messages:
   for trial in range(num_trials):
     for client in range(clients_per_vm):
 
+      out_file = out + "/" + str(i) + "_" + str(total_servers) + "s_" + str(total_clients) + "c_"
+      out_file += str(postfix) + "_" + str(rate) + "k" + opt_out + ".log"
       # Ask each server to generate extra tuples (to ensure we meet all the num_messages)
       extra = (i - total_clients) // total_servers
 
@@ -95,8 +97,7 @@ for i in num_messages:
       command += " -h " + str(server_ip) + ":" + str(init_port + init_server_id + (client % servers_per_vm))
       command += " -d " + str(pir_d) + " -r " + str(rounds) + " -b " + str(extra)
       command += " -k " + str(rate) + opt + " -t " + ret
-      command += " >> " + out + "/" + str(i) + "_" + str(total_servers) + "s_" + str(total_clients) + "c_"
-      command += str(postfix) + "_" + str(rate) + "k" + opt_out + ".log"
+      command += " >> " + out_file
 
       if (client != clients_per_vm - 1):
         command += " &"
@@ -105,3 +106,6 @@ for i in num_messages:
       os.system(command)
 
     time.sleep(1)
+
+parse_command = "python3 ./scripts/parse.py -f " + out_file
+os.system(parse_command)

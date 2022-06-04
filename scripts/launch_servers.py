@@ -37,7 +37,7 @@ parser.add_argument('-p', dest='port', default=8000, help='server initial port',
 results = parser.parse_args()
 
 
-ip = socket.gethostbyname(socket.gethostname())
+ip = '127.0.0.1'#socket.gethostbyname(socket.gethostname())
 
 total_servers = results.total_servers
 total_clients = results.total_clients
