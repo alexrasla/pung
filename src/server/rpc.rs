@@ -602,9 +602,7 @@ impl pung_rpc::Server for PungRpc {
                 for i in &label_collections {
                     let collection = bucket.get_collection(*i);
                     for tuple in collection.get_tuples() {
-                        // println!("idx {}", idx);
                         tuple_list.set(idx as u32, &tuple.to_binary());
-                        // tuple_list.push(tuple.to_binary());
                         idx += 1;
                     }
                 }            
