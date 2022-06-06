@@ -41,6 +41,34 @@ results = parser.parse_args()
 ip = '127.0.0.1'#socket.gethostbyname(socket.gethostname())
 
 total_servers = results.total_servers
+# total_clients = results.total_clients
+
+# num_server_vms = results.num_server_vms
+# num_client_vms = results.num_client_vms
+# vm_id = results.id
+
+# clients_per_server = total_clients // total_servers
+# servers_per_vm = total_servers // num_server_vms
+
+# init_server_id = vm_id * servers_per_vm
+
+rate = results.rate
+contact_rate = results.contact
+ret = results.ret
+pir_d = results.d
+host_file = results.host_file
+init_port = results.port
+
+NUM_CLIENTS = [5, 25, 50, 100, 150, 200, 250, 500, 1000]
+NUM_BUCKETS = [1, 5, 10]
+
+opt = ""
+
+if (results.opt != ''):
+  opt = " -o " + results.opt
+
+# for clients in NUM_CLIENTS:
+  # for c_rate in NUM_BUCKETS:
 total_clients = results.total_clients
 
 num_server_vms = results.num_server_vms
@@ -52,22 +80,11 @@ servers_per_vm = total_servers // num_server_vms
 
 init_server_id = vm_id * servers_per_vm
 
-rate = results.rate
-ret = results.ret
-pir_d = results.d
-host_file = results.host_file
-init_port = results.port
-
-opt = ""
-
-if (results.opt != ''):
-  opt = " -o " + results.opt
-
 for i in range(init_server_id, init_server_id + servers_per_vm):
   server_command = "./target/release/server -i " + str(ip) + " -s " + str(init_port) + " -d " + str(pir_d)
   server_command += " -t " + str(ret) + " -m " + str(clients_per_server)
   server_command += " -h " + host_file + " -n " + str(total_servers)
-  server_command += " -p " + str(i) + " -k " + str(rate) + opt
+  server_command += " -p " + str(i) + " -k " + str(rate) + " -c " + str(contact_rate) + opt
 
   if (i != init_server_id + servers_per_vm - 1):
     server_command = server_command + " &"

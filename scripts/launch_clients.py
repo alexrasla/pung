@@ -24,7 +24,6 @@ import time
 import argparse
 from parse import parse_output
 
-
 parser = argparse.ArgumentParser()
 
 parser.add_argument('-s', dest='total_servers', default=1, help='total servers', type=int)
@@ -47,13 +46,16 @@ parser.add_argument('--out', dest='out', default='.', help='out folder', type=st
 
 results = parser.parse_args()
 
+NUM_CLIENTS = [5, 25, 50, 100, 150, 200, 250, 500, 1000]
+NUM_BUCKETS = [1, 5, 10]
+
 num_messages = results.num
 
 if (len(num_messages) == 0):
   num_messages.append(131072) # default number of messages
 
 total_servers = results.total_servers
-total_clients = results.total_clients
+# total_clients = results.total_clients
 
 num_server_vms = results.num_server_vms
 num_client_vms = results.num_client_vms
@@ -80,6 +82,17 @@ if (results.opt != ''):
   opt = " -o " + results.opt
   opt_out = "_" + results.opt
 
+# clients_per_server = total_clients // total_servers  # ratio of clients to servers (to load balance things)
+# servers_per_vm = total_servers // num_server_vms     # number of server processes for each VM
+# clients_per_vm = total_clients // num_client_vms
+
+# init_server_id = vm_id * servers_per_vm
+# postfix = str(num_client_vms) + "vm"
+
+# for clients in NUM_CLIENTS:
+#   for c_rate in NUM_BUCKETS:
+        
+total_clients = results.total_clients
 clients_per_server = total_clients // total_servers  # ratio of clients to servers (to load balance things)
 servers_per_vm = total_servers // num_server_vms     # number of server processes for each VM
 clients_per_vm = total_clients // num_client_vms
@@ -92,14 +105,14 @@ for i in num_messages:
     for client in range(clients_per_vm):
 
       out_file = out + "/" + str(i) + "_" + str(total_servers) + "s_" + str(total_clients) + "c_"
-      out_file += str(postfix) + "_" + str(rate) + "k" + opt_out + ".log"
+      out_file += str(postfix) + "_" + str(rate) + "k" + str(contact_rate) + "c" + opt_out + ".log"
       # Ask each server to generate extra tuples (to ensure we meet all the num_messages)
       extra = (i - total_clients) // total_servers
 
       command = "./target/release/client -n " + str(client) + " -p " + str(client) + " -x \"hahahahe\""
       command += " -h " + str(server_ip) + ":" + str(init_port + init_server_id + (client % servers_per_vm))
       command += " -d " + str(pir_d) + " -r " + str(rounds) + " -b " + str(extra)
-      command += " -k " + str(rate) + opt + " -t " + ret
+      command += " -k " + str(rate) + " -c " + str(contact_rate) + opt + " -t " + ret
       command += " >> " + out_file
 
       if (client != clients_per_vm - 1):
