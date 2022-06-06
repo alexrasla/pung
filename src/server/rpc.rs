@@ -10,7 +10,7 @@ use pung_capnp::pung_rpc;
 use pung_capnp::pung_rpc::{ChangeExtraParams, ChangeExtraResults, CloseParams, CloseResults,
                            GetBloomParams, GetBloomResults, GetMappingParams, GetMappingResults,
                            RegisterParams, RegisterResults, RetrParams, RetrResults, SendParams,
-                           SendResults, SyncParams, SyncResults};
+                           SendResults, SyncParams, SyncResults, BroadcastParams, BroadcastResults};
 
 use rand::ChaChaRng;
 use rand::Rng;
@@ -506,7 +506,7 @@ impl pung_rpc::Server for PungRpc {
                 let mut total_dbs = 0;
                 for bucket in db.get_buckets(){
                     if !bucket.is_empty(){
-                        total_dbs += (bucket.total_dbs() as u32);
+                        total_dbs += bucket.total_dbs() as u32;
                     }
                 }
 
@@ -546,7 +546,7 @@ impl pung_rpc::Server for PungRpc {
                 let mut total_dbs = 0;
                 for bucket in db.get_buckets(){
                     if !bucket.is_empty(){
-                        total_dbs += (bucket.total_dbs() as u32);
+                        total_dbs += bucket.total_dbs() as u32;
                     }
                 }
             
@@ -561,6 +561,71 @@ impl pung_rpc::Server for PungRpc {
             }
         };
         ret_promise
+    }
+
+    fn broadcast(&mut self, params: BroadcastParams, mut res: BroadcastResults) -> gj::Promise<(), Error> {
+
+        let req = pry!(params.get());
+        let id: u64 = req.get_id();
+        let round: u64 = req.get_round();
+
+        if !self.clients.contains_key(&id) {
+            return gj::Promise::err(Error::failed("Invalid id during broadcast.".to_string()));
+        } else if !self.ret_ctx.reqs.contains_key(&id) {
+            return gj::Promise::err(Error::failed(
+                "(ret) Client is not synchronized.".to_string(),
+            ));
+        } else if self.ret_ctx.reqs[&id] == 0 {
+            return gj::Promise::err(Error::failed("retrieveal rate exceeded.".to_string()));
+        }
+
+        let ctx = if round % 5 == 0 {
+            &mut self.dial_ctx
+        } else {
+            &mut self.send_ctx
+        };
+        
+        let mut db = if round % 5 == 0 {
+            self.dial_dbase.borrow_mut()
+        } else {
+            self.dbase.borrow_mut()
+        };
+
+        // Indices of collections that contain meaningful labels
+        let label_collections: Vec<usize> = util::label_collections(self.opt_scheme);
+
+        let mut tuple_list = res.get().init_tuples((db.len()) as u32);
+        let mut idx = 0;
+
+        for bucket in db.get_buckets() {
+            if !bucket.is_empty() {
+                for i in &label_collections {
+                    let collection = bucket.get_collection(*i);
+                    for tuple in collection.get_tuples() {
+                        tuple_list.set(idx as u32, &tuple.to_binary());
+                        idx += 1;
+                    }
+                }            
+            }     
+        }
+
+        // Account for this retrieval
+        if let Some(entry) = self.ret_ctx.reqs.get_mut(&id) {
+            *entry -= 1;
+        }
+
+        // Check to see if we are done and we can move on to next round
+        if !self.ret_ctx.reqs.values().any(|&x| x > 0) {
+            ctx.reqs = self.clients.clone();
+            ctx.count = 0;
+            self.round += 1;
+            self.phase = Phase::Sending; 
+            db.clear(); // Garbage collect the whole thing
+
+            println!("Advancing to round {}", self.round);
+        }
+
+        gj::Promise::ok(())
     }
 
 

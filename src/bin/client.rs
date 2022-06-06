@@ -107,6 +107,7 @@ pub fn main() {
     let ret_scheme: db::RetScheme = match matches.opt_str("t") {
         Some(v) => {
             match v.as_ref() {
+                "n" => db::RetScheme::Naive,
                 "e" => db::RetScheme::Explicit,
                 "b" => db::RetScheme::Bloom,
                 "t" => db::RetScheme::Tree,

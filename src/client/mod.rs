@@ -777,6 +777,43 @@ impl<'a> PungClient<'a> {
         Ok(bloom_map)
     }
 
+    fn retr_naive_pir(
+        &'a self,
+        mut bucket_map: HashMap<usize, Vec<(&'a PungPeer, Vec<u8>)>>,
+        scope: &gj::WaitScope,
+        port: &mut gjio::EventPort,
+        is_dial: bool,
+    ) -> Result<Vec<Vec<u8>>, Error> {
+
+        let mut request = self.conn.broadcast_request();
+        request.get().set_id(self.id);
+        request.get().set_round(self.round);
+
+        println!("[Round {}] Broadcast      |   Upload | {} bytes", 
+        self.round,
+        16); // ID and round are both 8 bytes (64 bits)
+
+        // Send request to the server and get response
+        let response = request.send().promise.wait(scope, port)?;
+
+        // Extract answer from response
+        let tuple_data_list = response.get()?.get_tuples()?;
+
+        let mut tuple_data_len = 0;
+
+        for i in 0..tuple_data_list.len() {                        
+            let tuple_data = tuple_data_list.get(i)?;
+            tuple_data_len = tuple_data.len();
+        }
+
+        println!("[Round {}] Broadcast      | Download | {} bytes", 
+        self.round,
+        tuple_data_len * tuple_data_list.len() as usize);
+
+        let mut messages: Vec<Vec<u8>> = Vec::new();
+        Ok(messages)
+    }
+
     // Retrieves a message (or set of messages) form the server based on bucket_map
     fn retr_normal(
         &'a self,
@@ -805,6 +842,9 @@ impl<'a> PungClient<'a> {
         let mut messages: Vec<Vec<u8>> = Vec::new();
 
         match self.ret_scheme {
+            db::RetScheme::Naive => {
+                messages = self.retr_naive_pir(bucket_map, scope, port, is_dial)?;
+            }
             db::RetScheme::Explicit => {
                 // Get labels explicitly
                 let explicit_labels = self.get_explicit_labels(scope, port, is_dial)?;
@@ -954,6 +994,9 @@ impl<'a> PungClient<'a> {
 
 
         match self.ret_scheme {
+            db::RetScheme::Naive => {
+                messages = self.retr_naive_pir(bucket_map, scope, port, is_dial)?;
+            }
             db::RetScheme::Explicit => {
                 // Get labels explicitly
                 let explicit_labels = self.get_explicit_labels(scope, port, is_dial)?;
@@ -1477,6 +1520,9 @@ impl<'a> PungClient<'a> {
             // in a fixed order (e.g., 0, 1, 2,..., 8) and then put the tuples together afterwards.
             // However, that requires much grosser looking code and its performance is the same
             // as the scheme below. We leave it to be fixed later.
+            db::RetScheme::Naive => {
+                messages = self.retr_naive_pir(bucket_map, scope, port, is_dial)?;
+            }
             db::RetScheme::Explicit => {
                 // Get labels explicitly
                 let explicit_labels = self.get_explicit_labels(scope, port, is_dial)?;
