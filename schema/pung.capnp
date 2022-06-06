@@ -22,4 +22,6 @@ interface PungRpc {
   close @6 (id :UInt64) -> (success :Bool);
 
   changeExtra @7 (extra :UInt64) -> (success :Bool);
+
+  broadcast @8 (id :UInt64, round :UInt64) -> (tuples :List(Data));
 }

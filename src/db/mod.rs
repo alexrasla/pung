@@ -29,16 +29,17 @@ pub enum RetScheme {
     Explicit,
     Bloom,
     Tree,
+    Naive, // Broadcast messages (Naive PIR)
 }
 
 
 /// Type of optimization for retrieval scheme.
 #[derive(PartialEq, Eq, PartialOrd, Copy, Clone)]
 pub enum OptScheme {
-    Normal,   // No optimization
-    Aliasing, // Storing messages under two labels
-    Hybrid2,  // Hybrid with batch codes (supports 2 collisions per bucket)
-    Hybrid4,  // Hybrid with batch codes (supports 4 collisions per bucket)
+    Normal,    // No optimization
+    Aliasing,  // Storing messages under two labels
+    Hybrid2,   // Hybrid with batch codes (supports 2 collisions per bucket)
+    Hybrid4,   // Hybrid with batch codes (supports 4 collisions per bucket)
 }
 
 
@@ -413,7 +414,7 @@ impl<'a> Bucket<'a> {
     pub fn mid_labels(&self) -> Vec<Vec<u8>> {
         if self.opt_scheme == OptScheme::Hybrid2 {
             let lmid = match self.ret_scheme {
-                RetScheme::Explicit | RetScheme::Bloom => {
+                RetScheme::Explicit | RetScheme::Bloom | RetScheme::Naive => {
                     // lmid is the first element
                     match self.collections[1].get_first() {
                         Some(v) => v.label().to_vec(),
@@ -440,7 +441,7 @@ impl<'a> Bucket<'a> {
 
             for i in 1..4 {
                 let lmid = match self.ret_scheme {
-                    RetScheme::Explicit | RetScheme::Bloom => {
+                    RetScheme::Explicit | RetScheme::Bloom | RetScheme::Naive => {
                         // lmid is the first element
                         match self.collections[i].get_first() {
                             Some(v) => v.label().to_vec(),
