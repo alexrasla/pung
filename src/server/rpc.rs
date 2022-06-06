@@ -571,8 +571,6 @@ impl pung_rpc::Server for PungRpc {
 
         if !self.clients.contains_key(&id) {
             return gj::Promise::err(Error::failed("Invalid id during broadcast.".to_string()));
-        } else if round != self.round || round % 5 != 0 {
-            return gj::Promise::err(Error::failed("Invalid round number during broadcast".to_string()));
         } else if !self.ret_ctx.reqs.contains_key(&id) {
             return gj::Promise::err(Error::failed(
                 "(ret) Client is not synchronized.".to_string(),
@@ -581,24 +579,36 @@ impl pung_rpc::Server for PungRpc {
             return gj::Promise::err(Error::failed("retrieveal rate exceeded.".to_string()));
         }
 
-        let ctx = &mut self.dial_ctx;
-        let mut db = self.dial_dbase.borrow_mut();
+        let ctx = if round % 5 == 0 {
+            &mut self.dial_ctx
+        } else {
+            &mut self.send_ctx
+        };
+        
+        let mut db = if round % 5 == 0 {
+            self.dial_dbase.borrow_mut()
+        } else {
+            self.dbase.borrow_mut()
+        };
 
         // Indices of collections that contain meaningful labels
         let label_collections: Vec<usize> = util::label_collections(self.opt_scheme);
 
-        let mut tuple_list = res.get()
-            .init_tuples((db.num_buckets() * label_collections.len()) as u32);
+        let mut tuple_list = res.get().init_tuples((db.len()) as u32);
         let mut idx = 0;
 
         for bucket in db.get_buckets() {
-            for i in &label_collections {
-                let collection = bucket.get_collection(*i);
-                for tuple in collection.get_tuples() {
-                    tuple_list.set(idx as u32, &tuple.to_binary());
-                    idx += 1;
-                }
-            }           
+            if !bucket.is_empty() {
+                for i in &label_collections {
+                    let collection = bucket.get_collection(*i);
+                    for tuple in collection.get_tuples() {
+                        // println!("idx {}", idx);
+                        tuple_list.set(idx as u32, &tuple.to_binary());
+                        // tuple_list.push(tuple.to_binary());
+                        idx += 1;
+                    }
+                }            
+            }     
         }
 
         // Account for this retrieval
